@@ -1,6 +1,7 @@
 use std::io::{self, Read, Write};
 use std::{time::Duration, vec};
 
+use frames::get_info_req::{GetInfoReqFrame, ReqData};
 use serialport::SerialPort;
 
 mod utils;
@@ -21,12 +22,16 @@ fn main() -> io::Result<()> {
 
     let mut bytes: Vec<u8> = vec![];
 
-    for chunk in 0x00..=0x1D {
+    for cert_chunk in 0x00..=0x1D {
         set_cs_high(&mut port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));
         read_from_port(&mut port, 3)
             .unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
 
-        let wrote_bytes = send_l2_frame(vec![0x01, 0x02, 0x00, chunk], &mut port)
+        let frame = GetInfoReqFrame {
+            data: ReqData::X509Certificate { chunk: cert_chunk },
+        };
+
+        let wrote_bytes = send_l2_frame(frame.as_bytes(), &mut port)
             .unwrap_or_else(|_| panic!("Could not write; line: {}", line!()));
 
         read_from_port(&mut port, wrote_bytes)
@@ -45,7 +50,7 @@ fn main() -> io::Result<()> {
         send_response_size_request(&mut port)
             .unwrap_or_else(|_| panic!("Could not send response size request; line: {}", line!()));
 
-        let mut resp = read_from_port(&mut port, 8)
+        let resp = read_from_port(&mut port, 8)
             .unwrap_or_else(|_| panic!("Could not read response size; line: {}", line!()));
         let resp_str = strip_control_squences(&hex_to_ascii(&resp));
 
@@ -73,18 +78,8 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn add_checksum(frame: &mut Vec<u8>) {
-    // let checksum = ARC.checksum(&frame);
-    let checksum = crc16(&frame);
-
-    // append the cheksum to the frame
-    frame.push(checksum[0]);
-    frame.push(checksum[1]);
-}
-
 fn send_l2_frame(frame: Vec<u8>, port: &mut Box<dyn SerialPort>) -> io::Result<usize> {
-    let mut frame = frame.clone();
-    add_checksum(&mut frame);
+    let frame = frame.clone();
 
     if !verify_checksum(&frame) {
         panic!("Frame crc invalid!")
