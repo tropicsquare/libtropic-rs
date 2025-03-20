@@ -17,7 +17,7 @@ impl ReqData {
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
             // limit the chunk number to 29 //? why
-            &ReqData::X509Certificate { chunk } => vec![0x01, chunk],
+            &ReqData::X509Certificate { chunk } => vec![0x00, chunk],
             &ReqData::ChipID => vec![0x01, 0x00],
             &ReqData::RiscvFwVersion => vec![0x02, 0x00],
             &ReqData::SpectFwVersion => vec![0x04, 0x00],
