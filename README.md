@@ -2,6 +2,20 @@
 
 This branch is just for storing progress and will not be too similar to what `libtropic-rs` will become.
 
+
+## Showcase
+
+```Rust
+let get_info_req_frame = GetInfoReqFrame {
+    data: get_info_req::ReqData::X509Certificate { chunk: 0x00 },
+};
+
+assert_eq!(
+    get_info_req_frame.as_bytes(),
+    vec![0x01, 0x02, 0x00, 0x00, 0x28, 0x14]
+);
+```
+
 ## Plan
 
 - [x] Get comms up and running
