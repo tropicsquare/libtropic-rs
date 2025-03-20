@@ -46,7 +46,7 @@ pub struct GetInfoReqFrame {
 }
 
 impl Frame for GetInfoReqFrame {
-    fn to_bytes(&self) -> Vec<u8> {
+    fn as_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![REQ_ID, REQ_LEN]; // reqid and reqlen
         bytes.extend(self.data.to_bytes()); // reqdata
 
