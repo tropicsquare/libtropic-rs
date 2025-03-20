@@ -26,3 +26,17 @@ This branch is just for storing progress and will not be too similar to what `li
 - [ ] Protocol trait for connections
 - [ ] SPI connection
 - [ ] Write tests
+
+- [ ] Archive history and clean main branch so we get a fresh start
+
+
+## How to empty the repo history before publication
+
+```bash
+git checkout main
+git checkout --orphan new-main
+git rm -rf .
+git commit --allow-empty -m "Init"
+git branch -M new-main main
+git push origin main --force
+```
