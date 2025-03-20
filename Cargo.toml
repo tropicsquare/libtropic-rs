@@ -1,0 +1,8 @@
+[package]
+name = "tropic01_communication"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+crc = "3.2.1"
+serialport = "4.7.0"
