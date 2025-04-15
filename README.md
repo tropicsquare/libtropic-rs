@@ -6,14 +6,16 @@ This branch is just for storing progress and will not be too similar to what `li
 ## Showcase
 
 ```Rust
-let get_info_req_frame = GetInfoReqFrame {
-    data: get_info_req::ReqData::X509Certificate { chunk: 0x00 },
-};
-
-assert_eq!(
-    get_info_req_frame.as_bytes(),
-    vec![0x01, 0x02, 0x00, 0x00, 0x28, 0x14]
+let resp_obj_bytes = send_frame_and_get_response(
+    &mut port,
+    GetInfoReqFrame {
+        data: get_info_req::ReqData::SpectFwVersion,
+    },
 );
+
+let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
+
+println!("Spect Fw Version: {:#?}", resp_ob); // response 0001
 ```
 
 ## Plan
