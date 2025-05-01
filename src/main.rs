@@ -41,7 +41,7 @@ fn main() -> io::Result<()> {
             GetInfoReqFrame {
                 data: get_info_req::ReqData::X509Certificate { chunk: cert_chunk },
             },
-            Duration::from_millis(0),
+            Duration::from_millis(100),
         );
 
         // this response seems to come with a crc, so the last two bytes are cut
@@ -63,7 +63,7 @@ fn main() -> io::Result<()> {
         GetInfoReqFrame {
             data: get_info_req::ReqData::ChipID,
         },
-        Duration::from_millis(0),
+        Duration::from_millis(150),
     );
 
     let resp_ob = strip_control_squences(&ascii_bytes_to_hex_to_ascii(resp_obj_bytes.to_vec()));
@@ -75,7 +75,7 @@ fn main() -> io::Result<()> {
         GetInfoReqFrame {
             data: get_info_req::ReqData::RiscvFwVersion,
         },
-        Duration::from_millis(0),
+        Duration::from_millis(150),
     );
 
     let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
@@ -137,13 +137,13 @@ fn send_frame_and_get_response<T: Frame>(
     read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
 
     let mut resp = vec![0, 0, 0, 0];
-    let ok_resp = vec![13, 10, 48, 49]; // "01" in ascii
+    let ok_resp = vec![48, 49, 13, 10]; // "01" in ascii
 
     while resp != ok_resp {
         thread::sleep(sleep_duration_to_read_result);
 
         set_cs_high(port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));
-        read_from_port(port, 4).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
+        read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
 
         send_response_request(port)
             .unwrap_or_else(|_| panic!("Could not send response request; line: {}", line!()));
@@ -162,7 +162,7 @@ fn send_frame_and_get_response<T: Frame>(
     // for some reason, there is an extraneous 01 (ok) before the response len
     let resp_len = hex_str_to_dec(&resp_str[2..])
         .unwrap_or_else(|_| panic!("Could not convert from hex str to dec; line: {}", line!()));
-    let _ = write_n_junk_bytes(port, resp_len)
+    let _ = write_n_junk_bytes(port, resp_len + 2)
         .unwrap_or_else(|_| panic!("Could not write junk; line: {}", line!()));
 
     #[cfg(debug_assertions)]
@@ -198,7 +198,7 @@ fn send_l2_frame(frame: Vec<u8>, port: &mut Box<dyn SerialPort>) -> io::Result<u
 }
 
 fn write_n_junk_bytes(port: &mut Box<dyn SerialPort>, n: usize) -> io::Result<usize> {
-    let mut f_string = "F".repeat(n);
+    let mut f_string = "FF".repeat(n);
     f_string.push_str("x\n");
 
     #[cfg(debug_assertions)]
@@ -226,7 +226,7 @@ fn send_response_size_request(port: &mut Box<dyn SerialPort>) -> io::Result<usiz
 
 fn read_from_port(port: &mut Box<dyn SerialPort>, num_bytes: usize) -> io::Result<Vec<u8>> {
     std::thread::sleep(Duration::from_millis(10));
-    let mut serial_buf: Vec<u8> = vec![0; num_bytes];
+    let mut serial_buf: Vec<u8> = vec![0; num_bytes * 2];
 
     // Attempt to read from the port
     match port.read(serial_buf.as_mut_slice()) {
@@ -236,7 +236,7 @@ fn read_from_port(port: &mut Box<dyn SerialPort>, num_bytes: usize) -> io::Resul
             #[cfg(debug_assertions)]
             println!(
                 "Read {} bytes: {:#?}",
-                num_bytes,
+                num_bytes * 2,
                 strip_control_squences(&hex_to_ascii(&serial_buf))
             );
             Ok(serial_buf)

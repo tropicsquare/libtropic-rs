@@ -393,12 +393,14 @@ AAx
 < 2025/03/18 17:47:35.000382099  length=4 from=1674 to=1677
 01\r
 
+Resp len is 0x30 = 48 bytes
 
 > 2025/03/18 17:47:35.000394314  length=6 from=1697 to=1702
 FFFFx
 < 2025/03/18 17:47:35.000394634  length=6 from=1678 to=1683
 0130\r
 
+And here we have it, the chip's ephemeral public key + the auth tag, the junk data ha sthe appropriate
 
 > 2025/03/18 17:47:35.000406947  length=102 from=1703 to=1804
 FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00000000000000000000000000000000x
