@@ -1,7 +1,9 @@
 use std::io::{self, Read, Write};
+use std::thread;
 use std::{time::Duration, vec};
 
-use frames::get_info_req::{GetInfoReqFrame, ReqData};
+use frames::get_info_req::GetInfoReqFrame;
+use frames::handshake_req::HandshakeReqFrame;
 use serialport::SerialPort;
 
 mod utils;
@@ -14,6 +16,18 @@ mod checksum;
 mod checksum_tests;
 use checksum::*;
 
+use x25519_dalek::{EphemeralSecret, PublicKey};
+
+static DEV_PRIV_KEY_INDEX_0: [u8; 32] = [
+    0xd0, 0x99, 0x92, 0xb1, 0xf1, 0x7a, 0xbc, 0x4d, 0xb9, 0x37, 0x17, 0x68, 0xa2, 0x7d, 0xa0, 0x5b,
+    0x18, 0xfa, 0xb8, 0x56, 0x13, 0xa7, 0x84, 0x2c, 0xa6, 0x4c, 0x79, 0x10, 0xf2, 0x2e, 0x71, 0x6b,
+];
+
+static DEV_PUB_KEY_INDEX_0: [u8; 32] = [
+    0xe7, 0xf7, 0x35, 0xba, 0x19, 0xa3, 0x3f, 0xd6, 0x73, 0x23, 0xab, 0x37, 0x26, 0x2d, 0xe5, 0x36,
+    0x08, 0xca, 0x57, 0x85, 0x76, 0x53, 0x43, 0x52, 0xe1, 0x8f, 0x64, 0xe6, 0x13, 0xd3, 0x8d, 0x54,
+];
+
 fn main() -> io::Result<()> {
     let mut port = serialport::new("/dev/cu.usbmodem4982328A384B1", 115_200)
         .timeout(Duration::from_millis(10))
@@ -25,8 +39,9 @@ fn main() -> io::Result<()> {
         let resp_obj_bytes = send_frame_and_get_response(
             &mut port,
             GetInfoReqFrame {
-                data: ReqData::X509Certificate { chunk: cert_chunk },
+                data: get_info_req::ReqData::X509Certificate { chunk: cert_chunk },
             },
+            Duration::from_millis(0),
         );
 
         // this response seems to come with a crc, so the last two bytes are cut
@@ -48,6 +63,7 @@ fn main() -> io::Result<()> {
         GetInfoReqFrame {
             data: get_info_req::ReqData::ChipID,
         },
+        Duration::from_millis(0),
     );
 
     let resp_ob = strip_control_squences(&ascii_bytes_to_hex_to_ascii(resp_obj_bytes.to_vec()));
@@ -59,6 +75,7 @@ fn main() -> io::Result<()> {
         GetInfoReqFrame {
             data: get_info_req::ReqData::RiscvFwVersion,
         },
+        Duration::from_millis(0),
     );
 
     let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
@@ -70,18 +87,43 @@ fn main() -> io::Result<()> {
         GetInfoReqFrame {
             data: get_info_req::ReqData::SpectFwVersion,
         },
+        Duration::from_millis(0),
     );
 
     let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
 
     println!("Spect Fw Version: {:#?}", resp_ob);
 
+    let host_secret = EphemeralSecret::random();
+    let host_public = PublicKey::from(&host_secret);
+
+    let resp_obj_bytes = send_frame_and_get_response(
+        &mut port,
+        HandshakeReqFrame {
+            data: handshake_req::ReqData {
+                ephemeral_public_key: *host_public.as_bytes(),
+                pairing_key_slot: handshake_req::pairing_key_slotIndex::Zero,
+            },
+        },
+        Duration::from_millis(150),
+    );
+
+    let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
+
+    println!("Chip Secret: {:#?}", resp_ob);
+
     Ok(())
 }
 
-fn send_frame_and_get_response<T: Frame>(port: &mut Box<dyn SerialPort>, frame: T) -> Vec<u8> {
+fn send_frame_and_get_response<T: Frame>(
+    port: &mut Box<dyn SerialPort>,
+    frame: T,
+    sleep_duration_to_read_result: Duration,
+) -> Vec<u8> {
+    // CS =0
     set_cs_high(port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));
 
+    // Should respond OK\n (3 bytes)
     read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
 
     let wrote_bytes = send_l2_frame(frame.as_bytes(), port)
@@ -94,11 +136,21 @@ fn send_frame_and_get_response<T: Frame>(port: &mut Box<dyn SerialPort>, frame: 
 
     read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
 
-    send_response_request(port)
-        .unwrap_or_else(|_| panic!("Could not send response request; line: {}", line!()));
+    let mut resp = vec![0, 0, 0, 0];
+    let ok_resp = vec![13, 10, 48, 49]; // "01" in ascii
 
-    read_from_port(port, 4)
-        .unwrap_or_else(|_| panic!("Could not read response size; line: {}", line!()));
+    while resp != ok_resp {
+        thread::sleep(sleep_duration_to_read_result);
+
+        set_cs_high(port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));
+        read_from_port(port, 4).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
+
+        send_response_request(port)
+            .unwrap_or_else(|_| panic!("Could not send response request; line: {}", line!()));
+
+        resp = read_from_port(port, 4)
+            .unwrap_or_else(|_| panic!("Could not read response size; line: {}", line!()));
+    }
 
     send_response_size_request(port)
         .unwrap_or_else(|_| panic!("Could not send response size request; line: {}", line!()));

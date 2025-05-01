@@ -5,11 +5,11 @@ mod unit {
 
     #[test]
     fn can_be_constructed() {
-        let get_info_req_frame = GetInfoReqFrame {
+        let _get_info_req_frame = GetInfoReqFrame {
             data: get_info_req::ReqData::ChipID,
         };
 
-        println!("{:#?}", get_info_req_frame);
+        // println!("{:#?}", _get_info_req_frame);
     }
 
     mod certificate_frame_tests {

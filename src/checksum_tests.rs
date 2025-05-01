@@ -18,4 +18,7 @@ mod unit {
         let input = vec![0x01, 0x02, 0x01, 0x00, 0x2B, 0x93];
         assert_eq!(verify_checksum(&input), false);
     }
+
+    #[test]
+    fn anything() {}
 }

@@ -1,5 +1,7 @@
 pub mod get_info_req;
 pub mod get_info_req_tests;
+pub mod handshake_req;
+pub mod handshake_req_tests;
 
 use super::checksum::*;
 

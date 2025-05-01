@@ -136,6 +136,7 @@ CS=0
 < 2025/03/18 17:47:34.000955334  length=4 from=336 to=339
 OK\r
 
+Request SPECT_FW_VERSION
 
 > 2025/03/18 17:47:34.000955565  length=14 from=344 to=357
 010204002B8Cx
@@ -166,6 +167,8 @@ FFFFFF00C87Fx
 < 2025/03/18 17:47:34.000994602  length=14 from=368 to=381
 00010300F7F3\r
 
+
+The next four frame/response pairs get four chunks of the chip's certificate
 
 > 2025/03/18 17:47:35.000004772  length=5 from=387 to=391
 CS=0
@@ -321,6 +324,8 @@ CS=0
 OK\r
 
 
+Handshake request with the MCU's public ephemeral key
+
 > 2025/03/18 17:47:35.000203206  length=76 from=1576 to=1651
 0221CF075A98910BD86ACEEB6A5C979765243D73E7ED6BB3C115A6BEE5DD555C222F00A047x
 < 2025/03/18 17:47:35.000204538  length=76 from=1562 to=1637
@@ -332,6 +337,8 @@ CS=0
 < 2025/03/18 17:47:35.000215383  length=4 from=1638 to=1641
 OK\r
 
+
+Ok so what is happening here? The chip is responding with 00 while processing the request, after that it will respond with 01 and we can proceed
 
 > 2025/03/18 17:47:35.000215445  length=4 from=1657 to=1660
 AAx

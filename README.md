@@ -8,14 +8,18 @@ This branch is just for storing progress and will not be too similar to what `li
 ```Rust
 let resp_obj_bytes = send_frame_and_get_response(
     &mut port,
-    GetInfoReqFrame {
-        data: get_info_req::ReqData::SpectFwVersion,
+    HandshakeReqFrame {
+        data: handshake_req::ReqData {
+            ephemeral_public_key: *host_public.as_bytes(),
+            pairing_key_slot: handshake_req::pairing_key_slotIndex::Zero,
+        },
     },
+    Duration::from_millis(150),
 );
 
 let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
 
-println!("Spect Fw Version: {:#?}", resp_ob); // response 0001
+println!("Chip ephemeral key + auth tag: {:#?}", resp_ob); // e.g.: 51700ACFB6FB146E027BC64A77DFFBEE106D16E511576615
 ```
 
 ## Plan
