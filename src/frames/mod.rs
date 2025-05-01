@@ -1,3 +1,5 @@
+pub mod encrypted_cmd_req;
+pub mod encrypted_cmd_req_tests;
 pub mod get_info_req;
 pub mod get_info_req_tests;
 pub mod handshake_req;

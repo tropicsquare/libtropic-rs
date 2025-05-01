@@ -16,14 +16,15 @@ mod checksum;
 mod checksum_tests;
 use checksum::*;
 
+use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-static DEV_PRIV_KEY_INDEX_0: [u8; 32] = [
+static sh0priv: [u8; 32] = [
     0xd0, 0x99, 0x92, 0xb1, 0xf1, 0x7a, 0xbc, 0x4d, 0xb9, 0x37, 0x17, 0x68, 0xa2, 0x7d, 0xa0, 0x5b,
     0x18, 0xfa, 0xb8, 0x56, 0x13, 0xa7, 0x84, 0x2c, 0xa6, 0x4c, 0x79, 0x10, 0xf2, 0x2e, 0x71, 0x6b,
 ];
 
-static DEV_PUB_KEY_INDEX_0: [u8; 32] = [
+static sh0pub: [u8; 32] = [
     0xe7, 0xf7, 0x35, 0xba, 0x19, 0xa3, 0x3f, 0xd6, 0x73, 0x23, 0xab, 0x37, 0x26, 0x2d, 0xe5, 0x36,
     0x08, 0xca, 0x57, 0x85, 0x76, 0x53, 0x43, 0x52, 0xe1, 0x8f, 0x64, 0xe6, 0x13, 0xd3, 0x8d, 0x54,
 ];
@@ -34,71 +35,85 @@ fn main() -> io::Result<()> {
         .open()
         .expect("Failed to open port");
 
-    // let mut bytes: Vec<u8> = vec![];
-    // for cert_chunk in 0x00..=0x1D {
-    //     let resp_obj_bytes = send_frame_and_get_response(
-    //         &mut port,
-    //         GetInfoReqFrame {
-    //             data: get_info_req::ReqData::X509Certificate { chunk: cert_chunk },
-    //         },
-    //         Duration::from_millis(100),
-    //     );
+    let mut bytes: Vec<u8> = vec![];
+    for cert_chunk in 0x00..=0x03 {
+        let resp_obj_bytes = send_frame_and_get_response(
+            &mut port,
+            GetInfoReqFrame {
+                data: get_info_req::ReqData::X509Certificate { chunk: cert_chunk },
+            },
+            Duration::from_millis(100),
+        );
 
-    //     // this response seems to come with a crc, so the last two bytes are cut
-    //     bytes.extend(resp_obj_bytes);
+        // this response seems to come with a crc, so the last two bytes are cut
+        println!(
+            "appending bytes: {:#?}",
+            bytes_to_hex_string(&resp_obj_bytes)
+        );
+        bytes.extend(resp_obj_bytes);
 
-    //     println!("Got chunk: {:#?}", cert_chunk);
-    // }
+        println!("Got chunk: {:#?}", cert_chunk);
+    }
 
     // println!(
     //     "X.509 Cert: {:#?}",
     //     strip_control_squences(&bytes_to_ascii(&bytes))
     // );
 
-    // let resp_obj_bytes = send_frame_and_get_response(
-    //     &mut port,
-    //     GetInfoReqFrame {
-    //         data: get_info_req::ReqData::ChipID,
-    //     },
-    //     Duration::from_millis(150),
-    // );
+    // println!("X.509 (hex): {:#?}", bytes_to_hex_string(&bytes));
 
-    // let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes.to_vec()));
+    let stpub = extract_public_key_from_tropico_cert(bytes)
+        .unwrap_or_else(|_| panic!("Could not extract chip public key; line: {}", line!()));
 
-    // println!("Chip ID: {:#?}", resp_ob);
+    println!(
+        "Chip public key from cert: {:#?}",
+        bytes_to_hex_string(&stpub)
+    );
 
-    // let resp_obj_bytes = send_frame_and_get_response(
-    //     &mut port,
-    //     GetInfoReqFrame {
-    //         data: get_info_req::ReqData::RiscvFwVersion,
-    //     },
-    //     Duration::from_millis(150),
-    // );
+    let resp_obj_bytes = send_frame_and_get_response(
+        &mut port,
+        GetInfoReqFrame {
+            data: get_info_req::ReqData::ChipID,
+        },
+        Duration::from_millis(150),
+    );
 
-    // let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes));
+    let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes.to_vec()));
 
-    // println!("Riscv Fw Version: {:#?}", resp_ob);
+    println!("Chip ID: {:#?}", resp_ob);
 
-    // let resp_obj_bytes = send_frame_and_get_response(
-    //     &mut port,
-    //     GetInfoReqFrame {
-    //         data: get_info_req::ReqData::SpectFwVersion,
-    //     },
-    //     Duration::from_millis(0),
-    // );
+    let resp_obj_bytes = send_frame_and_get_response(
+        &mut port,
+        GetInfoReqFrame {
+            data: get_info_req::ReqData::RiscvFwVersion,
+        },
+        Duration::from_millis(150),
+    );
 
-    // let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes));
+    let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes));
 
-    // println!("Spect Fw Version: {:#?}", resp_ob);
+    println!("Riscv Fw Version: {:#?}", resp_ob);
 
-    let host_secret = EphemeralSecret::random();
-    let host_public = PublicKey::from(&host_secret);
+    let resp_obj_bytes = send_frame_and_get_response(
+        &mut port,
+        GetInfoReqFrame {
+            data: get_info_req::ReqData::SpectFwVersion,
+        },
+        Duration::from_millis(0),
+    );
+
+    let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes));
+
+    println!("Spect Fw Version: {:#?}", resp_ob);
+
+    let host_ephemeral_secret = EphemeralSecret::random();
+    let ehpub = PublicKey::from(&host_ephemeral_secret);
 
     let resp_obj_bytes = send_frame_and_get_response(
         &mut port,
         HandshakeReqFrame {
             data: handshake_req::ReqData {
-                ephemeral_public_key: *host_public.as_bytes(),
+                ephemeral_public_key: *ehpub.as_bytes(),
                 pairing_key_slot: handshake_req::pairing_key_slotIndex::Zero,
             },
         },
@@ -120,12 +135,53 @@ fn main() -> io::Result<()> {
         .unwrap_or_else(|_| panic!("Invalid length; line: {}", line!()));
     let chip_ephemeral_public_key = PublicKey::from(ephemeral_key_bytes_sized);
 
-    let shared_secret = host_secret.diffie_hellman(&chip_ephemeral_public_key);
+    let shared_secret = host_ephemeral_secret.diffie_hellman(&chip_ephemeral_public_key);
 
     println!(
         "Shared secret: {:#?}",
         bytes_to_hex_string(shared_secret.as_bytes())
     );
+
+    let protocol_name: [u8; 32] = *b"Noise_KK1_25519_AESGCM_SHA256\0\0\0";
+
+    // h = SHA256(protocol_name)
+    let mut hasher = Sha256::new();
+    hasher.update(&protocol_name);
+    let mut h = hasher.finalize_reset(); // hash: GenericArray<u8, U32>
+
+    // h = SHA256(h || shipub)
+    hasher.update(&h);
+    hasher.update(&sh0pub); // shipub must be [u8; 32]
+    h = hasher.finalize_reset();
+
+    // h = SHA256(h||STPUB)
+    hasher.update(&h);
+    hasher.update(&stpub); // shipub must be [u8; 32]
+    h = hasher.finalize_reset();
+
+    // h = SHA256(h||EHPUB)
+    hasher.update(&h);
+    hasher.update(&ehpub); // shipub must be [u8; 32]
+    h = hasher.finalize_reset();
+
+    // h = SHA256(h||PKEY_INDEX)
+    hasher.update(&h);
+    hasher.update([0x00]); // shipub must be [u8; 32]
+    h = hasher.finalize_reset();
+
+    println!("{:#?}", h);
+
+    // same result... not sure if more readable
+    // let mut h = sha256(protocol_name.to_vec());
+    // h.append(&mut sh0pub.to_vec());
+    // h = sha256(h);
+    // h.append(&mut stpub.to_vec());
+    // h = sha256(h);
+    // h.append(&mut ehpub.as_bytes().to_vec());
+    // h = sha256(h);
+    // h.append(&mut vec![0x00]);
+    // h = sha256(h);
+    // println!("{:#?}", h);
 
     Ok(())
 }

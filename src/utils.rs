@@ -1,3 +1,6 @@
+use hmac::{Hmac, Mac};
+use sha2::{Digest, Sha256};
+
 pub fn hex_to_ascii(data: &[u8]) -> String {
     data.iter().map(|&byte| byte as char).collect()
 }
@@ -64,4 +67,30 @@ pub fn ascii_bytes_to_real_bytes(ascii: &[u8]) -> Result<Vec<u8>, String> {
 
 pub fn bytes_to_hex_string(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+pub fn extract_public_key_from_tropico_cert(cert: Vec<u8>) -> Result<[u8; 32], String> {
+    let pattern = [0x65, 0x6e, 0x03, 0x21];
+    if let Some(pos) = cert
+        .windows(pattern.len())
+        .position(|window| window == pattern)
+    {
+        let start = pos + pattern.len();
+        if cert.len() >= start + 32 {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&cert[start..start + 32]);
+            Ok(key)
+        } else {
+            Err("The provided byte array is too short to contain a public key (minimum is 4 + 32 bytes)".to_string())
+        }
+    } else {
+        Err("Pattern before key not found (0x65, 0x6e, 0x03, 0x21) not found".to_string())
+    }
+}
+
+pub fn sha256(input: Vec<u8>) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(input);
+    let result = hasher.finalize();
+    return result.to_vec();
 }
