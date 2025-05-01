@@ -34,65 +34,62 @@ fn main() -> io::Result<()> {
         .open()
         .expect("Failed to open port");
 
-    let mut bytes: Vec<u8> = vec![];
-    for cert_chunk in 0x00..=0x1D {
-        let resp_obj_bytes = send_frame_and_get_response(
-            &mut port,
-            GetInfoReqFrame {
-                data: get_info_req::ReqData::X509Certificate { chunk: cert_chunk },
-            },
-            Duration::from_millis(100),
-        );
+    // let mut bytes: Vec<u8> = vec![];
+    // for cert_chunk in 0x00..=0x1D {
+    //     let resp_obj_bytes = send_frame_and_get_response(
+    //         &mut port,
+    //         GetInfoReqFrame {
+    //             data: get_info_req::ReqData::X509Certificate { chunk: cert_chunk },
+    //         },
+    //         Duration::from_millis(100),
+    //     );
 
-        // this response seems to come with a crc, so the last two bytes are cut
-        bytes.extend(
-            ascii_bytes_to_bytes(&hex_to_ascii(&resp_obj_bytes[..resp_obj_bytes.len() - 2]))
-                .unwrap(),
-        );
+    //     // this response seems to come with a crc, so the last two bytes are cut
+    //     bytes.extend(resp_obj_bytes);
 
-        println!("Got chunk: {:#?}", cert_chunk);
-    }
+    //     println!("Got chunk: {:#?}", cert_chunk);
+    // }
 
-    println!(
-        "X.509 Cert: {:#?}",
-        strip_control_squences(&bytes_to_ascii(&bytes))
-    );
+    // println!(
+    //     "X.509 Cert: {:#?}",
+    //     strip_control_squences(&bytes_to_ascii(&bytes))
+    // );
 
-    let resp_obj_bytes = send_frame_and_get_response(
-        &mut port,
-        GetInfoReqFrame {
-            data: get_info_req::ReqData::ChipID,
-        },
-        Duration::from_millis(150),
-    );
+    // let resp_obj_bytes = send_frame_and_get_response(
+    //     &mut port,
+    //     GetInfoReqFrame {
+    //         data: get_info_req::ReqData::ChipID,
+    //     },
+    //     Duration::from_millis(150),
+    // );
 
-    let resp_ob = strip_control_squences(&ascii_bytes_to_hex_to_ascii(resp_obj_bytes.to_vec()));
+    // let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes.to_vec()));
 
-    println!("Chip ID: {:#?}", resp_ob);
+    // println!("Chip ID: {:#?}", resp_ob);
 
-    let resp_obj_bytes = send_frame_and_get_response(
-        &mut port,
-        GetInfoReqFrame {
-            data: get_info_req::ReqData::RiscvFwVersion,
-        },
-        Duration::from_millis(150),
-    );
+    // let resp_obj_bytes = send_frame_and_get_response(
+    //     &mut port,
+    //     GetInfoReqFrame {
+    //         data: get_info_req::ReqData::RiscvFwVersion,
+    //     },
+    //     Duration::from_millis(150),
+    // );
 
-    let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
+    // let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes));
 
-    println!("Riscv Fw Version: {:#?}", resp_ob);
+    // println!("Riscv Fw Version: {:#?}", resp_ob);
 
-    let resp_obj_bytes = send_frame_and_get_response(
-        &mut port,
-        GetInfoReqFrame {
-            data: get_info_req::ReqData::SpectFwVersion,
-        },
-        Duration::from_millis(0),
-    );
+    // let resp_obj_bytes = send_frame_and_get_response(
+    //     &mut port,
+    //     GetInfoReqFrame {
+    //         data: get_info_req::ReqData::SpectFwVersion,
+    //     },
+    //     Duration::from_millis(0),
+    // );
 
-    let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
+    // let resp_ob = strip_control_squences(&bytes_to_ascii(&resp_obj_bytes));
 
-    println!("Spect Fw Version: {:#?}", resp_ob);
+    // println!("Spect Fw Version: {:#?}", resp_ob);
 
     let host_secret = EphemeralSecret::random();
     let host_public = PublicKey::from(&host_secret);
@@ -108,9 +105,27 @@ fn main() -> io::Result<()> {
         Duration::from_millis(150),
     );
 
-    let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
+    let chip_ephemeral_key_bytes = resp_obj_bytes[..32.min(resp_obj_bytes.len())].to_vec();
+    let auth_tag = resp_obj_bytes[..16.min(resp_obj_bytes.len())].to_vec();
 
-    println!("Chip Secret: {:#?}", resp_ob);
+    println!(
+        "Chip ephemeral key: {:#?}",
+        bytes_to_hex_string(&chip_ephemeral_key_bytes)
+    );
+
+    println!("Auth tag: {:#?}", bytes_to_hex_string(&auth_tag));
+
+    let ephemeral_key_bytes_sized: [u8; 32] = chip_ephemeral_key_bytes
+        .try_into()
+        .unwrap_or_else(|_| panic!("Invalid length; line: {}", line!()));
+    let chip_ephemeral_public_key = PublicKey::from(ephemeral_key_bytes_sized);
+
+    let shared_secret = host_secret.diffie_hellman(&chip_ephemeral_public_key);
+
+    println!(
+        "Shared secret: {:#?}",
+        bytes_to_hex_string(shared_secret.as_bytes())
+    );
 
     Ok(())
 }
@@ -169,16 +184,20 @@ fn send_frame_and_get_response<T: Frame>(
     println!("Response len: {:#?}", resp_len);
 
     // add 2 bytes for crc
-    let resp_obj_bytes = read_from_port(port, resp_len + 2)
+    let resp_obj_ascii_bytes = read_from_port(port, resp_len + 2)
         .unwrap_or_else(|_| panic!("Could not read chip ID; line: {}", line!()));
 
+    let mut resp_bytes = ascii_bytes_to_real_bytes(&resp_obj_ascii_bytes)
+        .unwrap_or_else(|_| panic!("Could not convert ascii bytes to bytes; line: {}", line!()));
+
     // TODO: find out why this doesn't work and make it work
-    // if !verify_checksum(&resp_obj_bytes) {
+    // if !verify_checksum(&resp_bytes) {
     //     panic!();
     // }
 
     // return without crc
-    return resp_obj_bytes;
+    resp_bytes.truncate(resp_bytes.len() - 2);
+    return resp_bytes;
 }
 
 fn send_l2_frame(frame: Vec<u8>, port: &mut Box<dyn SerialPort>) -> io::Result<usize> {
