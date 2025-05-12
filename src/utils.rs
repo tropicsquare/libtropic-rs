@@ -94,3 +94,35 @@ pub fn sha256(input: Vec<u8>) -> Vec<u8> {
     let result = hasher.finalize();
     return result.to_vec();
 }
+
+type HmacSha256 = Hmac<Sha256>;
+
+pub fn hkdf_one_out(message: &[u8], key: &[u8]) -> [u8; 32] {
+    let mut hmac = HmacSha256::new_from_slice(key).unwrap();
+    hmac.update(message);
+    let tmp = hmac.finalize().into_bytes();
+
+    let mut hmac1 = HmacSha256::new_from_slice(&tmp).unwrap();
+    hmac1.update(&[0x01]);
+    let output_1 = hmac1.finalize().into_bytes();
+
+    output_1.into()
+}
+
+pub fn hkdf_two_outs(message: &[u8], key: &[u8]) -> [[u8; 32]; 2] {
+    let mut hmac = HmacSha256::new_from_slice(key).unwrap();
+    hmac.update(message);
+    let tmp = hmac.finalize().into_bytes();
+
+    let mut hmac1 = HmacSha256::new_from_slice(&tmp).unwrap();
+    hmac1.update(&[0x01]);
+    let output_1 = hmac1.finalize().into_bytes();
+
+    let mut hmac2 = HmacSha256::new_from_slice(&tmp).unwrap();
+    let mut data = output_1.to_vec();
+    data.push(0x02);
+    let _ = hmac2.update(&data);
+    let output_2 = hmac2.finalize().into_bytes();
+
+    [output_1.into(), output_2.into()]
+}

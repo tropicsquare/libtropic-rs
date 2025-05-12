@@ -16,8 +16,11 @@ mod checksum;
 mod checksum_tests;
 use checksum::*;
 
+mod aes_utils;
+use aes_utils::*;
+
 use sha2::{Digest, Sha256};
-use x25519_dalek::{EphemeralSecret, PublicKey};
+use x25519_dalek::{PublicKey, ReusableSecret, StaticSecret};
 
 static sh0priv: [u8; 32] = [
     0xd0, 0x99, 0x92, 0xb1, 0xf1, 0x7a, 0xbc, 0x4d, 0xb9, 0x37, 0x17, 0x68, 0xa2, 0x7d, 0xa0, 0x5b,
@@ -106,7 +109,7 @@ fn main() -> io::Result<()> {
 
     println!("Spect Fw Version: {:#?}", resp_ob);
 
-    let host_ephemeral_secret = EphemeralSecret::random();
+    let host_ephemeral_secret = ReusableSecret::random();
     let ehpub = PublicKey::from(&host_ephemeral_secret);
 
     let resp_obj_bytes = send_frame_and_get_response(
@@ -121,7 +124,7 @@ fn main() -> io::Result<()> {
     );
 
     let chip_ephemeral_key_bytes = resp_obj_bytes[..32.min(resp_obj_bytes.len())].to_vec();
-    let auth_tag = resp_obj_bytes[..16.min(resp_obj_bytes.len())].to_vec();
+    let auth_tag = resp_obj_bytes[32..48.min(resp_obj_bytes.len())].to_vec();
 
     println!(
         "Chip ephemeral key: {:#?}",
@@ -134,6 +137,7 @@ fn main() -> io::Result<()> {
         .try_into()
         .unwrap_or_else(|_| panic!("Invalid length; line: {}", line!()));
     let chip_ephemeral_public_key = PublicKey::from(ephemeral_key_bytes_sized);
+    let etpub = chip_ephemeral_public_key.as_bytes();
 
     let shared_secret = host_ephemeral_secret.diffie_hellman(&chip_ephemeral_public_key);
 
@@ -169,8 +173,6 @@ fn main() -> io::Result<()> {
     hasher.update([0x00]); // shipub must be [u8; 32]
     h = hasher.finalize_reset();
 
-    println!("{:#?}", h);
-
     // same result... not sure if more readable
     // let mut h = sha256(protocol_name.to_vec());
     // h.append(&mut sh0pub.to_vec());
@@ -182,6 +184,34 @@ fn main() -> io::Result<()> {
     // h.append(&mut vec![0x00]);
     // h = sha256(h);
     // println!("{:#?}", h);
+
+    // hkdf part
+    // h = SHA256(h ||ETPUB)
+    let mut hasher = Sha256::new();
+    hasher.update(&h);
+    hasher.update(&etpub);
+    h = hasher.finalize_reset();
+
+    let mut ck = protocol_name.clone();
+
+    let key: [u8; 32] = *shared_secret.as_bytes();
+    ck = hkdf_one_out(&ck, &key);
+
+    //  X25519(SHiPRIV, ETPUB), 1)
+    let sh0priv_secret = StaticSecret::from(sh0priv);
+    let other_shared_secret = sh0priv_secret.diffie_hellman(&ehpub);
+    let key: [u8; 32] = *other_shared_secret.as_bytes();
+    ck = hkdf_one_out(&ck, &key);
+
+    let another_shared_secret = host_ephemeral_secret.diffie_hellman(&stpub.into());
+    let key: [u8; 32] = *another_shared_secret.as_bytes();
+    let [ck, k_auth] = hkdf_two_outs(&ck, &key);
+
+    let [k_cmd, k_res] = hkdf_two_outs(&ck, b"");
+
+    let auth_tag = init_aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, &h);
+
+    println!("Auth tag: {:#?}", bytes_to_hex_string(&auth_tag));
 
     Ok(())
 }
