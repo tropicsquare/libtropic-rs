@@ -5,6 +5,7 @@ mod unit {
     use x25519_dalek::{PublicKey, StaticSecret};
 
     use crate::{
+        aes_utils::init_aes256_gcm,
         frames::{
             Frame,
             handshake_req::{self, *},
@@ -104,6 +105,10 @@ mod unit {
             vec.try_into().expect("Vec must have length 32")
         }
 
+        fn vec_to_array_16(vec: Vec<u8>) -> [u8; 16] {
+            vec.try_into().expect("Vec must have length 16")
+        }
+
         let protocol_name: [u8; 32] = *b"Noise_KK1_25519_AESGCM_SHA256\0\0\0";
 
         let stpub = ascii_byte_string_to_bytes(
@@ -130,7 +135,7 @@ mod unit {
             "053432FDF0EABD2444AE0151FAB1EA44C0BF1D6788EC572EC2ED56D6020A8945",
         )
         .unwrap();
-        let t_tauth = ascii_byte_string_to_bytes("78AADC7E4415FD0FA76CBB806EE380F1");
+        let t_tauth = ascii_byte_string_to_bytes("78AADC7E4415FD0FA76CBB806EE380F1").unwrap();
         let hash1 = ascii_byte_string_to_bytes(
             "DC3CEC095541D8083C2D1AF6B2F4030FA3D63E4D7870D6766C806060105AE8DC",
         )
@@ -163,7 +168,7 @@ mod unit {
             "33F7C69BD317AF95C81CC9A936C154A3AA78FA5E6F8E21FA64C00A03689F6136",
         )
         .unwrap();
-        let hkdf_output_2 = ascii_byte_string_to_bytes(
+        let _hkdf_output_2_unused = ascii_byte_string_to_bytes(
             "624EA2ED51C2162078A843E1E4352CCD192E1115DA8020438C43B7C3EA773E7F",
         )
         .unwrap();
@@ -175,7 +180,7 @@ mod unit {
             "72AD33984797ECCBF53217631B7C959E02178A502A245FDD887A4CCCA8C9611F",
         )
         .unwrap();
-        let hkdf_output_2 = ascii_byte_string_to_bytes(
+        let _hkdf_output_2_unused = ascii_byte_string_to_bytes(
             "3E26C7FCCD9126DB3A83BE8CDCBDC63693454C28BC2A487FDC37E750771F2E7F",
         )
         .unwrap();
@@ -199,9 +204,7 @@ mod unit {
             "CC3FCEE961C3B851B0178880344B91E7520B427F55AE7CA0270504EA6E58F109",
         )
         .unwrap();
-        let iv = ascii_byte_string_to_bytes("000000000000000000000000");
-
-        let mut hasher = Sha256::new();
+        // let iv = ascii_byte_string_to_bytes("000000000000000000000000");
 
         let mut hasher = Sha256::new();
         hasher.update(&protocol_name);
@@ -242,8 +245,8 @@ mod unit {
         h = hasher.finalize_reset();
         assert_eq!(h.to_vec(), hash6);
 
-        let imported_secret = StaticSecret::from(vec_to_array_32(ehpriv));
-        let imported_pub = PublicKey::from(vec_to_array_32(etpub));
+        let imported_secret = StaticSecret::from(vec_to_array_32(ehpriv.clone()));
+        let imported_pub = PublicKey::from(vec_to_array_32(etpub.clone()));
         let shared_secret = imported_secret.diffie_hellman(&imported_pub);
         assert_eq!(shared_secret.as_bytes().to_vec(), shared_secret_1.to_vec());
 
@@ -258,11 +261,14 @@ mod unit {
         //     bytes_to_hex_string(shared_secret.as_bytes())
         // );
 
+        // ck = HKDF (ck, X25519(EHPRIV, ETPUB), 1)
         ck = protocol_name.clone();
         let tmp = hmac_sha256(&vec_to_array_32(shared_secret_1.clone()), &ck);
         let output_1 = hmac_sha256(&[0x01], &tmp);
-        println!("{:#?}", bytes_to_hex_string(&output_1));
-        assert_eq!(hkdf_output_1, output_1);
+        ck = output_1;
+
+        // println!("{:#?}", bytes_to_hex_string(&output_1));
+        assert_eq!(hkdf_output_1, ck);
 
         // ck = protocol_name.clone();
 
@@ -277,6 +283,59 @@ mod unit {
 
         // println!("{:?}", bytes_to_hex_string(&output_1));
 
-        // goal: 72AD33984797ECCBF53217631B7C959E02178A502A245FDD887A4CCCA8C9611F
+        let imported_secret = StaticSecret::from(vec_to_array_32(shipriv));
+        let imported_pub = PublicKey::from(vec_to_array_32(etpub));
+        let shared_secret = imported_secret.diffie_hellman(&imported_pub);
+        assert_eq!(shared_secret.as_bytes().to_vec(), shared_secret_2.to_vec());
+
+        // ck = HKDF (ck, X25519(SHiPRIV, ETPUB), 1)
+        let tmp = hmac_sha256(&vec_to_array_32(shared_secret_2.clone()), &ck);
+        let output_1 = hmac_sha256(&[0x01], &tmp);
+        ck = output_1;
+        // println!("{:#?}", bytes_to_hex_string(&output_1));
+        assert_eq!(hkdf_output_3, ck);
+
+        let imported_secret = StaticSecret::from(vec_to_array_32(ehpriv));
+        let imported_pub = PublicKey::from(vec_to_array_32(stpub));
+        let shared_secret = imported_secret.diffie_hellman(&imported_pub);
+        assert_eq!(shared_secret.as_bytes().to_vec(), shared_secret_3.to_vec());
+
+        // ck , k AUTH = HKDF (ck, X25519(EHPRIV, STPUB), 2)
+
+        let tmp = hmac_sha256(&vec_to_array_32(shared_secret_3.clone()), &ck);
+        let output_1 = hmac_sha256(&[0x01], &tmp);
+        ck = output_1.clone();
+
+        assert_eq!(hkdf_output_4, ck);
+
+        let mut output_one_plus_two: [u8; 33] = [0; 33];
+        output_one_plus_two[..32].copy_from_slice(&output_1);
+        output_one_plus_two[32] = 0x02;
+
+        let output_2 = hmac_sha256(&output_one_plus_two, &tmp);
+
+        assert_eq!(hkdf_kauth, output_2);
+
+        // k CMD , k RES = HKDF (ck, empty string , 2)
+        let tmp = hmac_sha256(b"", &ck);
+        let output_1 = hmac_sha256(&[0x01], &tmp);
+
+        let mut output_one_plus_two: [u8; 33] = [0; 33];
+        output_one_plus_two[..32].copy_from_slice(&output_1);
+        output_one_plus_two[32] = 0x02;
+
+        let output_2 = hmac_sha256(&output_one_plus_two, &tmp);
+
+        assert_eq!(hkdf_kcmd, output_1);
+        assert_eq!(hkdf_kres, output_2);
+
+        let auth_tag = init_aes256_gcm(
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            &vec_to_array_32(hkdf_kauth),
+            &h,
+        );
+
+        // println!("{:#?}", bytes_to_hex_string(&auth_tag));
+        assert_eq!(auth_tag, vec_to_array_16(t_tauth));
     }
 }
