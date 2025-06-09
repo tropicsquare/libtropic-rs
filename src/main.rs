@@ -152,18 +152,18 @@ fn main() -> io::Result<()> {
     let etpub = chip_ephemeral_public_key.as_bytes();
     assert_eq!(&ephemeral_key_bytes_sized, etpub);
 
-    let stpub = ascii_byte_string_to_bytes(
-        "e44436c00c62ff2678f20a7e99c2886e9af58188a3e2f364f4c21834a91a047f",
-    )
-    .unwrap();
-    let shipriv = ascii_byte_string_to_bytes(
-        "d09992b1f17abc4db9371768a27da05b18fab85613a7842ca64c7910f22e716b",
-    )
-    .unwrap();
-    let shipub = ascii_byte_string_to_bytes(
-        "e7f735ba19a33fd67323ab37262de53608ca578576534352e18f64e613d38d54",
-    )
-    .unwrap();
+    // let stpub = ascii_byte_string_to_bytes(
+    //     "e44436c00c62ff2678f20a7e99c2886e9af58188a3e2f364f4c21834a91a047f",
+    // )
+    // .unwrap();
+    // let shipriv = ascii_byte_string_to_bytes(
+    //     "d09992b1f17abc4db9371768a27da05b18fab85613a7842ca64c7910f22e716b",
+    // )
+    // .unwrap();
+    // let shipub = ascii_byte_string_to_bytes(
+    //     "e7f735ba19a33fd67323ab37262de53608ca578576534352e18f64e613d38d54",
+    // )
+    // .unwrap();
 
     let protocol_name: [u8; 32] = *b"Noise_KK1_25519_AESGCM_SHA256\0\0\0";
 
@@ -174,7 +174,7 @@ fn main() -> io::Result<()> {
 
     // h = SHA256(h || shipub)
     hasher.update(&h);
-    hasher.update(&shipub); // shipub must be [u8; 32]
+    hasher.update(&sh0pub); // shipub must be [u8; 32]
     h = hasher.finalize_reset();
     println!("{:#?}", bytes_to_hex_string(&h));
 
@@ -208,13 +208,13 @@ fn main() -> io::Result<()> {
 
     [ck, _] = hkdf(&ck, shared_secret.as_bytes());
 
-    let imported_secret = StaticSecret::from(vec_to_array_32(shipriv));
+    let imported_secret = StaticSecret::from(sh0priv);
     let imported_pub = PublicKey::from(*etpub);
     let shared_secret = imported_secret.diffie_hellman(&imported_pub);
 
     [ck, _] = hkdf(&ck, shared_secret.as_bytes());
 
-    let imported_pub = PublicKey::from(vec_to_array_32(stpub));
+    let imported_pub = PublicKey::from(stpub);
     let shared_secret = ehpriv.diffie_hellman(&imported_pub);
 
     let mut k_auth: [u8; 32];
@@ -224,11 +224,7 @@ fn main() -> io::Result<()> {
     let mut kres: [u8; 32];
     [kcmd, kres] = hkdf(&ck, b"");
 
-    let auth_tag = init_aes256_gcm(
-        &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        &vec_to_array_32(k_auth.to_vec()),
-        &h,
-    );
+    let auth_tag = init_aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, &h);
 
     println!("{:#?}", bytes_to_hex_string(&auth_tag));
 
