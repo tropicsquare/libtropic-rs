@@ -224,7 +224,8 @@ fn main() -> io::Result<()> {
     let mut kres: [u8; 32];
     [kcmd, kres] = hkdf(&ck, b"");
 
-    let auth_tag = init_aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, &h);
+    // let auth_tag = init_aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, &h);
+    let (_, auth_tag) = aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, b"", &h);
 
     println!("{:#?}", bytes_to_hex_string(&auth_tag));
 
