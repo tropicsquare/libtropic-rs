@@ -75,7 +75,7 @@ pub fn extract_public_key_from_tropico_cert(cert: Vec<u8>) -> Result<[u8; 32], S
         .windows(pattern.len())
         .position(|window| window == pattern)
     {
-        let start = pos + pattern.len();
+        let start = pos + 1 + pattern.len();
         if cert.len() >= start + 32 {
             let mut key = [0u8; 32];
             key.copy_from_slice(&cert[start..start + 32]);
@@ -125,4 +125,12 @@ pub fn hkdf_two_outs(message: &[u8], key: &[u8]) -> [[u8; 32]; 2] {
     let output_2 = hmac2.finalize().into_bytes();
 
     [output_1.into(), output_2.into()]
+}
+
+pub fn vec_to_array_32(vec: Vec<u8>) -> [u8; 32] {
+    vec.try_into().expect("Vec must have length 32")
+}
+
+pub fn vec_to_array_16(vec: Vec<u8>) -> [u8; 16] {
+    vec.try_into().expect("Vec must have length 16")
 }
