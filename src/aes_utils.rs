@@ -28,9 +28,21 @@ pub fn aes256_gcm(iv: &[u8; 12], key: &[u8; 32], msg: &[u8], ad: &[u8]) -> (Vec<
     let payload = Payload { msg, aad: ad };
 
     let ct = cipher.encrypt(nonce, payload).unwrap();
-    let tag = &ct[ct.len() - 16..];
+    let tag_slice = &ct[ct.len() - 16..];
 
-    let mut result = [0u8; 16];
-    result.copy_from_slice(tag);
-    (ct, result)
+    let mut tag = [0u8; 16];
+    tag.copy_from_slice(tag_slice);
+    (ct, tag)
+}
+
+pub fn aes256_gcm_concat(iv: &[u8; 12], key: &[u8; 32], msg: &[u8], ad: &[u8]) -> Vec<u8> {
+    let key = Key::<Aes256Gcm>::from_slice(key);
+    let cipher = Aes256Gcm::new(key);
+    let nonce = Nonce::from_slice(iv);
+
+    // Encrypt empty plaintext to get only tag
+    let payload = Payload { msg, aad: ad };
+
+    let ct = cipher.encrypt(nonce, payload).unwrap();
+    ct
 }

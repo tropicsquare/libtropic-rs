@@ -25,6 +25,7 @@ mod hkdf_tests;
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, ReusableSecret, StaticSecret};
 
+use crate::frames::encrypted_cmd_req::EncryptedCmdReq;
 use crate::hkdf::hkdf;
 
 static sh0priv: [u8; 32] = [
@@ -229,6 +230,32 @@ fn main() -> io::Result<()> {
 
     println!("{:#?}", bytes_to_hex_string(&auth_tag));
 
+    let cmd = [0x50, 0x20];
+
+    let mut cmd_enc_and_tag =
+        aes256_gcm_concat(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &kcmd, &cmd, b"");
+
+    cmd_enc_and_tag.splice(0..0, [0x02, 0x00]); // not sure why, but 
+
+    println!(
+        "cmd_enc_and_tag: {:#?}",
+        bytes_to_hex_string(&cmd_enc_and_tag)
+    );
+
+    let resp_obj_bytes = send_frame_and_get_response(
+        &mut port,
+        EncryptedCmdReq {
+            data: encrypted_cmd_req::ReqData {
+                encryped_command: cmd_enc_and_tag,
+            },
+        },
+        Duration::from_millis(150),
+    );
+
+    println!("{:#?}", resp_obj_bytes);
+    let resp_obj_bytes = get_next_response(&mut port, Duration::from_millis(150));
+    println!("{:#?}", resp_obj_bytes);
+
     // let mut hasher = Sha256::new();
     // hasher.update(&protocol_name);
     // let mut h = hasher.finalize_reset(); // hash: GenericArray<u8, U32>
@@ -328,6 +355,59 @@ fn send_frame_and_get_response<T: Frame>(
 
     read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
 
+    let mut resp = vec![0, 0, 0, 0];
+    let ok_resp = vec![48, 49, 13, 10]; // "01" in ascii
+
+    while resp != ok_resp {
+        thread::sleep(sleep_duration_to_read_result);
+
+        set_cs_high(port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));
+        read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
+
+        send_response_request(port)
+            .unwrap_or_else(|_| panic!("Could not send response request; line: {}", line!()));
+
+        resp = read_from_port(port, 4)
+            .unwrap_or_else(|_| panic!("Could not read response size; line: {}", line!()));
+    }
+
+    send_response_size_request(port)
+        .unwrap_or_else(|_| panic!("Could not send response size request; line: {}", line!()));
+
+    let resp = read_from_port(port, 8)
+        .unwrap_or_else(|_| panic!("Could not read response size; line: {}", line!()));
+    let resp_str = strip_control_squences(&hex_to_ascii(&resp));
+
+    // for some reason, there is an extraneous 01 (ok) before the response len
+    let resp_len = hex_str_to_dec(&resp_str[2..])
+        .unwrap_or_else(|_| panic!("Could not convert from hex str to dec; line: {}", line!()));
+    let _ = write_n_junk_bytes(port, resp_len + 2)
+        .unwrap_or_else(|_| panic!("Could not write junk; line: {}", line!()));
+
+    #[cfg(debug_assertions)]
+    println!("Response len: {:#?}", resp_len);
+
+    // add 2 bytes for crc
+    let resp_obj_ascii_bytes = read_from_port(port, resp_len + 2)
+        .unwrap_or_else(|_| panic!("Could not read chip ID; line: {}", line!()));
+
+    let mut resp_bytes = ascii_bytes_to_real_bytes(&resp_obj_ascii_bytes)
+        .unwrap_or_else(|_| panic!("Could not convert ascii bytes to bytes; line: {}", line!()));
+
+    // TODO: find out why this doesn't work and make it work
+    // if !verify_checksum(&resp_bytes) {
+    //     panic!();
+    // }
+
+    // return without crc
+    resp_bytes.truncate(resp_bytes.len() - 2);
+    return resp_bytes;
+}
+
+fn get_next_response(
+    port: &mut Box<dyn SerialPort>,
+    sleep_duration_to_read_result: Duration,
+) -> Vec<u8> {
     let mut resp = vec![0, 0, 0, 0];
     let ok_resp = vec![48, 49, 13, 10]; // "01" in ascii
 

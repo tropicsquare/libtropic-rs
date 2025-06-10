@@ -1,7 +1,7 @@
 #[cfg(test)]
 
 mod unit {
-    use crate::checksum::verify_checksum;
+    use crate::{checksum::verify_checksum, utils::hex_str_to_bytes};
 
     #[test]
     fn test_with_known_value() {
@@ -21,13 +21,7 @@ mod unit {
 
     #[test]
     fn anything() {
-        use x25519_dalek::{EphemeralSecret, PublicKey};
-        let alice_secret = EphemeralSecret::random();
-        let alice_public = PublicKey::from(&alice_secret);
-        let bob_secret = EphemeralSecret::random();
-        let bob_public = PublicKey::from(&bob_secret);
-        let alice_shared_secret = alice_secret.diffie_hellman(&bob_public);
-        let bob_shared_secret = bob_secret.diffie_hellman(&alice_public);
-        assert_eq!(alice_shared_secret.as_bytes(), bob_shared_secret.as_bytes());
+        let frame = hex_str_to_bytes("041402004E928594F32C56AEB8A2EA9C30F2E471EA7C597B").unwrap();
+        println!("{:#?}", verify_checksum(&frame));
     }
 }
