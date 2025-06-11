@@ -46,3 +46,13 @@ pub fn aes256_gcm_concat(iv: &[u8; 12], key: &[u8; 32], msg: &[u8], ad: &[u8]) -
     let ct = cipher.encrypt(nonce, payload).unwrap();
     ct
 }
+
+pub fn aes256_gcm_decrypt(iv: &[u8; 12], key: &[u8; 32], ct: &[u8], ad: &[u8]) -> Vec<u8> {
+    let key = Key::<Aes256Gcm>::from_slice(key);
+    let cipher = Aes256Gcm::new(key);
+    let nonce = Nonce::from_slice(iv);
+
+    let payload = Payload { msg: ct, aad: ad };
+
+    cipher.decrypt(nonce, payload).unwrap()
+}

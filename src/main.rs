@@ -231,6 +231,7 @@ fn main() -> io::Result<()> {
     println!("{:#?}", bytes_to_hex_string(&auth_tag));
 
     let cmd = [0x50, 0x20];
+    // let cmd = [0x01, 0xff];
 
     let mut cmd_enc_and_tag =
         aes256_gcm_concat(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &kcmd, &cmd, b"");
@@ -254,7 +255,23 @@ fn main() -> io::Result<()> {
 
     println!("{:#?}", resp_obj_bytes);
     let resp_obj_bytes = get_next_response(&mut port, Duration::from_millis(150));
-    println!("{:#?}", resp_obj_bytes);
+    // println!("{:#?}", resp_obj_bytes);
+
+    let dec = aes256_gcm_decrypt(
+        &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        &kres,
+        &resp_obj_bytes[2..],
+        b"",
+    );
+
+    if dec[0] == 0xc3 {
+        println!("Command sucessfully executed (c3)");
+    }
+
+    println!(
+        "Command returned: {:#?} (mind the padding)",
+        bytes_to_hex_string(&dec)
+    );
 
     // let mut hasher = Sha256::new();
     // hasher.update(&protocol_name);
