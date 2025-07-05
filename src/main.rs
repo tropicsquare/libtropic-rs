@@ -39,6 +39,7 @@ static sh0pub: [u8; 32] = [
 ];
 
 fn main() -> io::Result<()> {
+    // let mut port = serialport::new("/dev/tty.usbmodem1b36003d37941", 115_200)
     let mut port = serialport::new("/dev/cu.usbmodem4982328A384B1", 115_200)
         .timeout(Duration::from_millis(10))
         .open()
@@ -137,14 +138,14 @@ fn main() -> io::Result<()> {
         bytes_to_hex_string(&resp_obj_bytes)
     );
     let chip_ephemeral_key_bytes = resp_obj_bytes[..32.min(resp_obj_bytes.len())].to_vec();
-    let auth_tag = resp_obj_bytes[32..48.min(resp_obj_bytes.len())].to_vec();
+    let auth_tag_chip = resp_obj_bytes[32..48.min(resp_obj_bytes.len())].to_vec();
 
     println!(
         "Chip ephemeral key: {:#?}",
         bytes_to_hex_string(&chip_ephemeral_key_bytes)
     );
 
-    println!("Auth tag: {:#?}", bytes_to_hex_string(&auth_tag));
+    println!("Auth tag: {:#?}", bytes_to_hex_string(&auth_tag_chip));
 
     let ephemeral_key_bytes_sized: [u8; 32] = chip_ephemeral_key_bytes
         .try_into()
@@ -228,10 +229,12 @@ fn main() -> io::Result<()> {
     // let auth_tag = init_aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, &h);
     let (_, auth_tag) = aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, b"", &h);
 
+    assert_eq!(auth_tag, auth_tag_chip[0..16]);
+
     println!("{:#?}", bytes_to_hex_string(&auth_tag));
 
-    let cmd = [0x50, 0x20];
-    // let cmd = [0x01, 0xff];
+    let cmd = [0x50, 0x20]; // get a 32 byte random number
+    // let cmd = [0x01, 0xff]; // ping (return anything but the first byte)
 
     let mut cmd_enc_and_tag =
         aes256_gcm_concat(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &kcmd, &cmd, b"");
@@ -272,81 +275,6 @@ fn main() -> io::Result<()> {
         "Command returned: {:#?} (mind the padding)",
         bytes_to_hex_string(&dec)
     );
-
-    // let mut hasher = Sha256::new();
-    // hasher.update(&protocol_name);
-    // let mut h = hasher.finalize_reset(); // hash: GenericArray<u8, U32>
-    // println!("h = SHA256(protocol name): {:#?}", bytes_to_hex_string(&h));
-
-    // // h = SHA256(h || shipub)
-    // hasher.update(&h);
-    // hasher.update(&sh0pub); // shipub must be [u8; 32]
-    // h = hasher.finalize_reset();
-    // println!("h = SHA256(h || shipub): {:#?}", bytes_to_hex_string(&h));
-
-    // // h = SHA256(h || STPUB)
-    // hasher.update(&h);
-    // hasher.update(&stpub); // shipub must be [u8; 32]
-    // h = hasher.finalize_reset();
-    // println!("stpub: {:#?}", bytes_to_hex_string(&stpub));
-    // println!("h = SHA256(h||STPUB): {:#?}", bytes_to_hex_string(&h));
-
-    // print!("EHPRIV: ");
-    // for byte in ehpriv.as_bytes().iter() {
-    //     print!("0x{:02x}, ", byte);
-    // }
-    // println!("");
-
-    // print!("EHPUB: ");
-    // for byte in ehpriv.as_bytes().iter() {
-    //     print!("0x{:02x}, ", byte);
-    // }
-    // println!("");
-
-    // // h = SHA256(h || EHPUB)
-    // hasher.update(&h);
-    // hasher.update(&ehpub); // shipub must be [u8; 32]
-    // h = hasher.finalize_reset();
-    // println!("h = SHA256(h || EHPUB): {:#?}", bytes_to_hex_string(&h));
-
-    // // h = SHA256(h || PKEY_INDEX)
-    // hasher.update(&h);
-    // hasher.update([0x00]); // shipub must be [u8; 32]
-    // h = hasher.finalize_reset();
-    // println!(
-    //     "h = SHA256(h || PKEY_INDEX): {:#?}",
-    //     bytes_to_hex_string(&h)
-    // );
-
-    // // h = SHA256(h||ETPUB):
-    // hasher.update(&h);
-    // hasher.update(&etpub);
-    // h = hasher.finalize_reset();
-
-    // println!("h = SHA256(h||ETPUB): {:#?}", bytes_to_hex_string(&h));
-
-    // let mut ck = protocol_name.clone();
-
-    // // ck = HKDF (ck, X25519(EHPRIV, ETPUB), 1)
-    // [ck, _] = hkdf(&ck, shared_secret_1.as_bytes());
-
-    // let imported_secret = StaticSecret::from(sh0priv);
-    // let imported_pub = PublicKey::from(*etpub);
-    // let shared_secret_2 = imported_secret.diffie_hellman(&imported_pub);
-
-    // [ck, _] = hkdf(&ck, shared_secret_2.as_bytes());
-
-    // let imported_pub = PublicKey::from(stpub);
-    // let shared_secret_3 = ehpriv.diffie_hellman(&imported_pub);
-
-    // [ck, _] = hkdf(&ck, shared_secret_3.as_bytes());
-
-    // let hkdf_kauth: [u8; 32];
-    // [_, hkdf_kauth] = hkdf(&ck, b"");
-
-    // let auth_tag = init_aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &hkdf_kauth, &h);
-
-    // println!("Auth tag: {:#?}", bytes_to_hex_string(&auth_tag));
 
     Ok(())
 }
