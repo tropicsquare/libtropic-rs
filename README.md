@@ -60,3 +60,7 @@ git commit --allow-empty -m "Init"
 git branch -M new-main main
 git push origin main --force
 ```
+
+## Testing
+
+Run `cargo test` for tests and install `cargo-tarpaulin` and run `cargo tarpaulin --out Html` for test coverage

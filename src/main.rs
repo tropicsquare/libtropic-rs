@@ -22,9 +22,13 @@ use aes_utils::*;
 mod hkdf;
 mod hkdf_tests;
 
+mod commands;
+use commands::*;
+
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, ReusableSecret, StaticSecret};
 
+use crate::commands::ping::PingCommand;
 use crate::frames::encrypted_cmd_req::EncryptedCmdReq;
 use crate::hkdf::hkdf;
 
@@ -233,48 +237,70 @@ fn main() -> io::Result<()> {
 
     println!("{:#?}", bytes_to_hex_string(&auth_tag));
 
-    let cmd = [0x50, 0x20]; // get a 32 byte random number
-    // let cmd = [0x01, 0xff]; // ping (return anything but the first byte)
+    // let cmd = [0x50, 0x20]; // get a 32 byte random number
+
+    let mut ping_cmd_data_too_large = Vec::with_capacity(600);
+    for n in 0u8..=119 {
+        ping_cmd_data_too_large.extend(std::iter::repeat(n).take(5));
+    }
+
+    println!("{:#?}", ping_cmd_data_too_large);
+
+    // let cmd = (PingCommand {
+    //     data: vec![0xff, 0xdd],
+    // })
+    // .as_bytes();
+
+    let cmd = (PingCommand {
+        data: ping_cmd_data_too_large,
+    })
+    .as_bytes();
 
     let mut cmd_enc_and_tag =
         aes256_gcm_concat(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &kcmd, &cmd, b"");
 
-    cmd_enc_and_tag.splice(0..0, [0x02, 0x00]); // not sure why, but 
+    let split_cmd_chunks: Vec<Vec<u8>> = cmd_enc_and_tag
+        .chunks(252)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+
+    // the conversion takes the len and creates a two byte representation up to 4096, least significant byte first
+    cmd_enc_and_tag.splice(0..0, (cmd_enc_and_tag.len() as u16).to_le_bytes()); // pretty sure this is len and chunk number
 
     println!(
         "cmd_enc_and_tag: {:#?}",
         bytes_to_hex_string(&cmd_enc_and_tag)
     );
 
-    let resp_obj_bytes = send_frame_and_get_response(
+    let resp_obj_bytes = send_frame_and_get_req_cont(
         &mut port,
         EncryptedCmdReq {
             data: encrypted_cmd_req::ReqData {
-                encryped_command: cmd_enc_and_tag,
+                encryped_command: split_cmd_chunks[0].clone(),
             },
         },
         Duration::from_millis(150),
     );
 
-    println!("{:#?}", resp_obj_bytes);
-    let resp_obj_bytes = get_next_response(&mut port, Duration::from_millis(150));
     // println!("{:#?}", resp_obj_bytes);
+    // let resp_obj_bytes = get_next_response(&mut port, Duration::from_millis(150));
+    // // println!("{:#?}", resp_obj_bytes);
 
-    let dec = aes256_gcm_decrypt(
-        &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        &kres,
-        &resp_obj_bytes[2..],
-        b"",
-    );
+    // let dec = aes256_gcm_decrypt(
+    //     &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    //     &kres,
+    //     &resp_obj_bytes[2..],
+    //     b"",
+    // );
 
-    if dec[0] == 0xc3 {
-        println!("Command sucessfully executed (c3)");
-    }
+    // if dec[0] == 0xc3 {
+    //     println!("Command sucessfully executed (c3)");
+    // }
 
-    println!(
-        "Command returned: {:#?} (mind the padding)",
-        bytes_to_hex_string(&dec)
-    );
+    // println!(
+    //     "Command returned: {:#?} (mind the padding)",
+    //     bytes_to_hex_string(&dec)
+    // );
 
     Ok(())
 }
@@ -304,6 +330,76 @@ fn send_frame_and_get_response<T: Frame>(
     let ok_resp = vec![48, 49, 13, 10]; // "01" in ascii
 
     while resp != ok_resp {
+        thread::sleep(sleep_duration_to_read_result);
+
+        set_cs_high(port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));
+        read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
+
+        send_response_request(port)
+            .unwrap_or_else(|_| panic!("Could not send response request; line: {}", line!()));
+
+        resp = read_from_port(port, 4)
+            .unwrap_or_else(|_| panic!("Could not read response size; line: {}", line!()));
+    }
+
+    send_response_size_request(port)
+        .unwrap_or_else(|_| panic!("Could not send response size request; line: {}", line!()));
+
+    let resp = read_from_port(port, 8)
+        .unwrap_or_else(|_| panic!("Could not read response size; line: {}", line!()));
+    let resp_str = strip_control_squences(&hex_to_ascii(&resp));
+
+    // for some reason, there is an extraneous 01 (ok) before the response len
+    let resp_len = hex_str_to_dec(&resp_str[2..])
+        .unwrap_or_else(|_| panic!("Could not convert from hex str to dec; line: {}", line!()));
+    let _ = write_n_junk_bytes(port, resp_len + 2)
+        .unwrap_or_else(|_| panic!("Could not write junk; line: {}", line!()));
+
+    #[cfg(debug_assertions)]
+    println!("Response len: {:#?}", resp_len);
+
+    // add 2 bytes for crc
+    let resp_obj_ascii_bytes = read_from_port(port, resp_len + 2)
+        .unwrap_or_else(|_| panic!("Could not read chip ID; line: {}", line!()));
+
+    let mut resp_bytes = ascii_bytes_to_real_bytes(&resp_obj_ascii_bytes)
+        .unwrap_or_else(|_| panic!("Could not convert ascii bytes to bytes; line: {}", line!()));
+
+    // TODO: find out why this doesn't work and make it work
+    // if !verify_checksum(&resp_bytes) {
+    //     panic!();
+    // }
+
+    // return without crc
+    resp_bytes.truncate(resp_bytes.len() - 2);
+    return resp_bytes;
+}
+
+fn send_frame_and_get_req_cont<T: Frame>(
+    port: &mut Box<dyn SerialPort>,
+    frame: T,
+    sleep_duration_to_read_result: Duration,
+) -> Vec<u8> {
+    // CS =0
+    set_cs_high(port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));
+
+    // Should respond OK\n (3 bytes)
+    read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
+
+    let wrote_bytes = send_l2_frame(frame.as_bytes(), port)
+        .unwrap_or_else(|_| panic!("Could not write; line: {}", line!()));
+
+    read_from_port(port, wrote_bytes)
+        .unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
+
+    set_cs_high(port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));
+
+    read_from_port(port, 3).unwrap_or_else(|_| panic!("Could not read; line: {}", line!()));
+
+    let mut resp = vec![0, 0, 0, 0];
+    let req_cont = vec![48, 49, 13, 10]; // "01" in ascii
+
+    while resp != req_cont {
         thread::sleep(sleep_duration_to_read_result);
 
         set_cs_high(port).unwrap_or_else(|_| panic!("Could not set CS; line: {}", line!()));

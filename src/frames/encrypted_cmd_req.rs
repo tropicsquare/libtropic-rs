@@ -11,6 +11,7 @@ pub struct ReqData {
 impl ReqData {
     /// Serialize the payload to bytes
     pub fn to_bytes(&self) -> Vec<u8> {
+        println!("{:#?}", self.encryped_command.len());
         if self.encryped_command.len() > 252 {
             panic!("Payload too large for one frame, you need to slice it into chunks <= 252 bytes")
         }
