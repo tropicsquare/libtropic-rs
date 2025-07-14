@@ -28,6 +28,7 @@ use commands::*;
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, ReusableSecret, StaticSecret};
 
+use crate::commands::get_random_bytes::GetRandomBytesCommand;
 use crate::commands::ping::PingCommand;
 use crate::frames::encrypted_cmd_req::EncryptedCmdReq;
 use crate::hkdf::hkdf;
@@ -236,18 +237,18 @@ fn main() -> io::Result<()> {
 
     println!("{:#?}", bytes_to_hex_string(&auth_tag));
 
-    // let cmd = [0x50, 0x20]; // get a 32 byte random number
+    // let cmd = (PingCommand {
+    //     data: vec![0xff, 0xdd],
+    // })
+    // .as_bytes();
 
-    let cmd = (PingCommand {
-        data: vec![0xff, 0xdd],
-    })
-    .as_bytes();
+    let cmd = (GetRandomBytesCommand { n_bytes: 0 }).as_bytes();
 
     let mut cmd_enc_and_tag =
         aes256_gcm_concat(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &kcmd, &cmd, b"");
 
     // the conversion takes the len and creates a two byte representation up to 4096, least significant byte first
-    cmd_enc_and_tag.splice(0..0, [0x03, 0x00]); // pretty sure this is len and chunk number
+    cmd_enc_and_tag.splice(0..0, (cmd.len() as u16).to_le_bytes()); // pretty sure this is len and chunk number
 
     println!(
         "cmd_enc_and_tag: {:#?}",
