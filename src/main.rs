@@ -230,7 +230,6 @@ fn main() -> io::Result<()> {
     let mut kres: [u8; 32];
     [kcmd, kres] = hkdf(&ck, b"");
 
-    // let auth_tag = init_aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, &h);
     let (_, auth_tag) = aes256_gcm(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &k_auth, b"", &h);
 
     assert_eq!(auth_tag, auth_tag_chip[0..16]);
@@ -239,33 +238,16 @@ fn main() -> io::Result<()> {
 
     // let cmd = [0x50, 0x20]; // get a 32 byte random number
 
-    let mut ping_cmd_data_too_large = Vec::with_capacity(600);
-    for n in 0u8..=119 {
-        ping_cmd_data_too_large.extend(std::iter::repeat(n).take(5));
-    }
-
-    println!("{:#?}", ping_cmd_data_too_large);
-
-    // let cmd = (PingCommand {
-    //     data: vec![0xff, 0xdd],
-    // })
-    // .as_bytes();
-
     let cmd = (PingCommand {
-        data: ping_cmd_data_too_large,
+        data: vec![0xff, 0xdd],
     })
     .as_bytes();
 
     let mut cmd_enc_and_tag =
         aes256_gcm_concat(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], &kcmd, &cmd, b"");
 
-    let split_cmd_chunks: Vec<Vec<u8>> = cmd_enc_and_tag
-        .chunks(252)
-        .map(|chunk| chunk.to_vec())
-        .collect();
-
     // the conversion takes the len and creates a two byte representation up to 4096, least significant byte first
-    cmd_enc_and_tag.splice(0..0, (cmd_enc_and_tag.len() as u16).to_le_bytes()); // pretty sure this is len and chunk number
+    cmd_enc_and_tag.splice(0..0, [0x03, 0x00]); // pretty sure this is len and chunk number
 
     println!(
         "cmd_enc_and_tag: {:#?}",
@@ -276,31 +258,31 @@ fn main() -> io::Result<()> {
         &mut port,
         EncryptedCmdReq {
             data: encrypted_cmd_req::ReqData {
-                encryped_command: split_cmd_chunks[0].clone(),
+                encryped_command: cmd_enc_and_tag.clone(),
             },
         },
         Duration::from_millis(150),
     );
 
+    println!("{:#?}", resp_obj_bytes);
+    let resp_obj_bytes = get_next_response(&mut port, Duration::from_millis(150));
     // println!("{:#?}", resp_obj_bytes);
-    // let resp_obj_bytes = get_next_response(&mut port, Duration::from_millis(150));
-    // // println!("{:#?}", resp_obj_bytes);
 
-    // let dec = aes256_gcm_decrypt(
-    //     &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    //     &kres,
-    //     &resp_obj_bytes[2..],
-    //     b"",
-    // );
+    let dec = aes256_gcm_decrypt(
+        &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        &kres,
+        &resp_obj_bytes[2..],
+        b"",
+    );
 
-    // if dec[0] == 0xc3 {
-    //     println!("Command sucessfully executed (c3)");
-    // }
+    if dec[0] == 0xc3 {
+        println!("Command sucessfully executed (c3)");
+    }
 
-    // println!(
-    //     "Command returned: {:#?} (mind the padding)",
-    //     bytes_to_hex_string(&dec)
-    // );
+    println!(
+        "Command returned: {:#?} (mind the padding)",
+        bytes_to_hex_string(&dec)
+    );
 
     Ok(())
 }
