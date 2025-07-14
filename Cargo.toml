@@ -1,13 +1,25 @@
 [package]
-name = "tropic01_communication"
+name = "libtropic_rs"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[lib]
+name = "libtropic_rs"
+path = "src/lib.rs"
+
+[[test]]
+name = "hardware_tests"
+path = "hardware_tests/mod.rs"
+
 [dependencies]
 aes-gcm = "0.10.3"
-crc = "3.2.1"
+crc = "3.3.0"
 hmac = "0.12.1"
-serialport = "4.7.0"
+serialport = "4.7.2"
 sha2 = "0.10.9"
 x25519-dalek = { version = "2.0.1", features = [
     "getrandom",

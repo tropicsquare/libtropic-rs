@@ -75,3 +75,17 @@ git push origin main --force
 ## Testing
 
 Run `cargo test` for tests and install `cargo-tarpaulin` and run `cargo tarpaulin --out Html` for test coverage
+
+### Hardware Tests
+
+**Requires physical TROPIC01 chip connected via USB**
+
+Update `/dev/` path in `hardware_tests/mod.rs` then run:
+```shell
+cargo test --test hardware_tests
+```
+
+If you need debug output from the test:
+```shell
+cargo test --test hardware_tests -- --nocapture
+```
