@@ -17,9 +17,20 @@ let resp_obj_bytes = send_frame_and_get_response(
     Duration::from_millis(150),
 );
 
-let resp_ob = strip_control_squences(&hex_to_ascii(&resp_obj_bytes));
+//... a lot of hashing ...
 
-println!("Chip ephemeral key + auth tag: {:#?}", resp_ob); // e.g.: 51700ACFB6FB146E027BC64A77DFFBEE106D16E511576615
+let cmd = GetRandomBytesCommand { n_bytes: 32 };
+let encrypted_cmd = aes256_gcm_concat(&nonce, &cmd_key, &cmd.as_bytes(), b"");
+
+let response = send_frame_and_get_req_cont(
+    &mut port,
+    EncryptedCmdReq {
+        data: encrypted_cmd_req::ReqData {
+            encryped_command: encrypted_cmd,
+        },
+    },
+    Duration::from_millis(150),
+);
 ```
 
 ## Plan
@@ -30,8 +41,8 @@ println!("Chip ephemeral key + auth tag: {:#?}", resp_ob); // e.g.: 51700ACFB6FB
 ### General Frames
 
 - [x] Get the same CRC checksums as libtropic
-- [ ] Think up some cool trait for frames
-- [ ] Think up a communication procedure that will work for any l2/l3 frame
+- [x] Think up some cool trait for frames
+- [x] Think up a communication procedure that will work for any l2/l3 frame
 
 ### Get_Info_Req (poc)
 
