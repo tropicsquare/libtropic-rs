@@ -1,0 +1,5 @@
+allow-expect-in-tests = true
+allow-print-in-tests = true
+allow-unwrap-in-tests = true
+# 64 bits because we are compiling the backend for x86_64
+trivial-copy-size-limit = 64

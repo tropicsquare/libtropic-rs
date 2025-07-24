@@ -1,0 +1,143 @@
+[workspace]
+
+resolver = "3"
+members = ["tropic01", "tropic01-example-rpi"]
+
+[workspace.package]
+authors = ["Filancore GmbH <info@filancore.com>"]
+edition = "2024"
+homepage = "https://www.filancore.com/"
+license-file = "LICENSE"
+publish = false
+rust-version = "1.85.1"
+
+[profile.dev]
+lto = "off"
+
+[profile.release]
+lto = "off"
+
+[profile.dev.package.tropic01]
+opt-level = 3
+
+[profile.dev.package.tropic01-example-rpi]
+opt-level = 3
+
+[workspace.lints.rust]
+# denied lints
+rust-2018-compatibility = "deny"
+rust-2018-idioms = "deny"
+rust-2021-compatibility = "deny"
+trivial_casts = "deny"
+trivial_numeric_casts = "deny"
+unused_extern_crates = "deny"
+unused_import_braces = "deny"
+# Rust 2024 edition lints
+if-let-rescope = "allow"
+tail-expr-drop-order = "allow"
+impl-trait-overcaptures = "allow"
+static-mut-refs = "deny"
+boxed-slice-into-iter = "deny"
+dependency-on-unit-never-type-fallback = "deny"
+deprecated-safe-2024 = "deny"
+edition-2024-expr-fragment-specifier = "allow"
+keyword-idents-2024 = "deny"
+missing-unsafe-on-extern = "deny"
+never-type-fallback-flowing-into-unsafe = "deny"
+rust-2024-guarded-string-incompatible-syntax = "deny"
+rust-2024-incompatible-pat = "deny"
+rust-2024-prelude-collisions = "deny"
+unsafe-attr-outside-unsafe = "deny"
+unsafe-op-in-unsafe-fn = "deny"
+# warning lints
+future_incompatible = { level = "warn", priority = -1 }
+nonstandard_style = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# denied lints
+dbg_macro = "deny"
+allow_attributes = "deny"
+# panic_in_result_fn = "deny"
+
+# warning lints
+all = { level = "warn", priority = -1 }
+await_holding_lock = "warn"
+cfg_not_test = "warn"
+char_lit_as_u8 = "warn"
+clone_on_ref_ptr = "warn"
+debug_assert_with_mut_call = "warn"
+empty_enum = "warn"
+enum_glob_use = "warn"
+equatable_if_let = "warn"
+exit = "warn"
+expl_impl_clone_on_copy = "warn"
+explicit_into_iter_loop = "warn"
+explicit_iter_loop = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+float_cmp_const = "warn"
+from_iter_instead_of_collect = "warn"
+if_let_mutex = "warn"
+implicit_clone = "warn"
+imprecise_flops = "warn"
+integer_division_remainder_used = "warn"
+inefficient_to_string = "warn"
+invalid_upcast_comparisons = "warn"
+iter_not_returning_iterator = "warn"
+large_digit_groups = "warn"
+large_stack_arrays = "warn"
+large_types_passed_by_value = "warn"
+let_unit_value = "warn"
+linkedlist = "warn"
+lossy_float_literal = "warn"
+macro_use_imports = "warn"
+manual_is_variant_and = "warn"
+manual_ok_or = "warn"
+map_flatten = "warn"
+match_on_vec_items = "warn"
+match_wild_err_arm = "warn"
+match_wildcard_for_single_variants = "warn"
+mem_forget = "warn"
+missing_const_for_fn = "warn"
+missing_safety_doc = "warn"
+must_use_candidate = "warn"
+mut_mut = "warn"
+mutex_integer = "warn"
+needless_borrow = "warn"
+needless_continue = "warn"
+needless_for_each = "warn"
+option_as_ref_cloned = "warn"
+option_option = "warn"
+path_buf_push_overwrite = "warn"
+ptr_as_ptr = "warn"
+rc_mutex = "warn"
+redundant_type_annotations = "warn"
+ref_as_ptr = "warn"
+ref_option_ref = "warn"
+renamed_function_params = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+same_functions_in_if_condition = "warn"
+semicolon_if_nothing_returned = "warn"
+set_contains_or_insert = "warn"
+single_char_pattern = "warn"
+str_split_at_newline = "warn"
+string_add_assign = "warn"
+string_add = "warn"
+string_lit_as_bytes = "warn"
+string_to_string = "warn"
+trait_duplication_in_bounds = "warn"
+trivially_copy_pass_by_ref = "warn"
+unnested_or_patterns = "warn"
+unused_self = "warn"
+unwrap_used = "deny"
+used_underscore_binding = "warn"
+useless_transmute = "warn"
+verbose_file_reads = "warn"
+while_float = "warn"
+zero_sized_map_values = "warn"
+
+[workspace.lints.rustdoc]
+# TODO: enable for v1.0 or open-sourcing
+# missing_crate_level_docs = "warn"
+broken_intra_doc_links = "warn"
+private_doc_tests = "warn"
