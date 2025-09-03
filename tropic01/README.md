@@ -34,3 +34,8 @@ Most of the critical features are implemented. If you are missing a feature, ple
 
 - [C implementation by Tropic Square](https://github.com/tropicsquare/libtropic/blob/master)
 - [Datasheet and User API](https://github.com/tropicsquare/tropic01/tree/main/doc)
+
+
+## License
+
+See the [LICENSE.md](LICENSE.md) file in the root of this repository or consult license information at [Tropic Square website](http:/tropicsquare.com/license).
