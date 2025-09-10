@@ -38,4 +38,4 @@ Most of the critical features are implemented. If you are missing a feature, ple
 
 ## License
 
-See the [LICENSE.md](LICENSE.md) file in the root of this folder or consult license information at [Tropic Square website](http:/tropicsquare.com/license).
+See the [LICENSE](LICENSE) file in the root of this folder or consult license information at [Tropic Square website](http:/tropicsquare.com/license).
