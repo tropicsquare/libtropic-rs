@@ -2,6 +2,10 @@
 
 Platform agnostic `embedded-hal` driver for the TROPIC01 crypto chip.
 
+ >[!WARNING]
+ > This is a community-driven project. While this repository is hosted by Tropic Square, the code is not officially supported or maintained by them.
+ > Tropic Square is not responsible for this code. Do not use it for production unless you know what you are doing.
+
 ## Current State
 
 Most of the critical features are implemented. If you are missing a feature, please open an issue and/or MR.
