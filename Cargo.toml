@@ -7,6 +7,7 @@ members = ["tropic01", "tropic01-example-rpi"]
 authors = ["Filancore GmbH <info@filancore.com>"]
 edition = "2024"
 homepage = "https://www.filancore.com/"
+repository = "https://github.com/tropicsquare/libtropic-rs"
 license-file = "LICENSE"
 publish = false
 rust-version = "1.85.1"
