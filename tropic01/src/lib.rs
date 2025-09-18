@@ -23,6 +23,7 @@ pub use crate::lt_2::StartupReq;
 pub use crate::lt_2::X509Certificate;
 pub use crate::lt_3::EccCurve;
 pub use crate::lt_3::EccOrigin;
+pub use crate::lt_3::EccKeyReadResponse;
 
 mod crc16;
 mod crypto;
