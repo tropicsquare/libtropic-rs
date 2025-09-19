@@ -16,6 +16,7 @@ use zeroize::Zeroize;
 
 pub use crate::crypto::CryptoError;
 pub use crate::crypto::X25519;
+#[cfg(feature = "x25519-dalek")]
 pub use crate::crypto::X25519Dalek;
 pub use crate::lt_2::ResponseStatus;
 pub use crate::lt_2::SleepReq;

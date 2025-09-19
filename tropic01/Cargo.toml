@@ -33,10 +33,10 @@ sha2 = { version = "0.10", default-features = false }
 x25519-dalek = { version = "2", default-features = false, features = [
   "static_secrets",
   "zeroize",
-] }
+], optional = true }
 zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 zeroize = { version = "1", default-features = false, features = ["derive"] }
 
 [features]
-default = ["keys"]
+default = ["keys", "x25519-dalek"]
 keys = []
