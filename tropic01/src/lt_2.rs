@@ -15,6 +15,7 @@ use zerocopy::Unaligned;
 
 use super::Error;
 use super::Tropic01;
+use crate::Aes256GcmKey;
 use crate::FromBytes;
 use crate::L2_CHUNK_MAX_DATA_SIZE;
 use crate::L2_CMD_REQ_LEN;
@@ -326,7 +327,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         )
         .map_err(|_| Error::HandshakeFailed)?;
 
-        self.set_session(Some(super::Session::new(kcmd, kres)));
+        self.session = Some(super::Session::new(kcmd, kres));
 
         Ok(())
     }
@@ -525,7 +526,7 @@ fn process_handshake(
     stpub: PublicKey,
     ttauth: [u8; L3_TAG_SIZE],
     pkey_index: u8,
-) -> Result<(PublicKey, StaticSecret), CryptoError> {
+) -> Result<(Aes256GcmKey, Aes256GcmKey), CryptoError> {
     let hash = sha256_sequence(
         PROTOCOL_NAME,
         shipub.as_bytes(),
@@ -554,7 +555,7 @@ fn process_handshake(
     // The hash is passed as aad, and an empty message is passed as the to be
     // decrypted message
     aesgcm_decrypt(
-        &StaticSecret::from(kauth),
+        &Aes256GcmKey(kauth),
         &Nonce::default(),
         &hash,
         &ttauth,
@@ -564,7 +565,7 @@ fn process_handshake(
     let mut kcmd_out: [u8; 32] = [0; 32];
     kcmd_out.copy_from_slice(&kcmd[0..32]);
 
-    Ok((PublicKey::from(kcmd_out), StaticSecret::from(kres)))
+    Ok((Aes256GcmKey(kcmd_out), Aes256GcmKey(kres)))
 }
 
 #[cfg(test)]
@@ -573,6 +574,7 @@ mod test {
     use x25519_dalek::StaticSecret;
     use zerocopy::big_endian::U16;
 
+    use crate::Aes256GcmKey;
     use crate::FromBytes;
     use crate::Nonce;
     use crate::crypto::aesgcm_decrypt;
@@ -738,7 +740,7 @@ mod test {
         let mut hash_buf: [u8; 0] = *b"";
 
         aesgcm_decrypt(
-            &StaticSecret::from(kauth),
+            &Aes256GcmKey(kauth),
             &Nonce::default(),
             &hash,
             &ttauth,
@@ -758,7 +760,7 @@ mod test {
         )
         .unwrap();
 
-        assert_eq!(kcmd[..32], kcmd_test.to_bytes());
-        assert_eq!(kres, kres_test.to_bytes());
+        assert_eq!(&kcmd[..32], kcmd_test.as_ref());
+        assert_eq!(&kres, kres_test.as_ref());
     }
 }

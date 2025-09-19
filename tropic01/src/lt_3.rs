@@ -178,7 +178,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         let size = U16::try_from(len)
         // Safety: Expect is safe here since l3_buf capacity (L3_FRAME_MAX_SIZE) < U16::MAX.
         .expect("cmd len to be in u16 range");
-        let tag = aesgcm_encrypt(session.encrypt, &session.iv, b"", &mut self.l3_buf)
+        let tag = aesgcm_encrypt(&session.encrypt, &session.iv, b"", &mut self.l3_buf)
             .map_err(Error::Encryption)?;
 
         let cmd = EncryptedL3CommandPacket {

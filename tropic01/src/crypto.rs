@@ -7,9 +7,8 @@ use hmac::Hmac;
 use hmac::Mac;
 use sha2::Digest;
 use sha2::Sha256;
-use x25519_dalek::PublicKey;
-use x25519_dalek::StaticSecret;
 
+use crate::Aes256GcmKey;
 use crate::L3_FRAME_MAX_SIZE;
 use crate::Nonce;
 
@@ -111,13 +110,13 @@ pub(super) fn sha256_sequence(
 }
 
 pub(super) fn aesgcm_encrypt(
-    key: PublicKey,
+    key: &Aes256GcmKey,
     nonce: &Nonce,
     aad: &[u8],
     buf: &mut ArrayVec<u8, L3_FRAME_MAX_SIZE>,
 ) -> Result<[u8; 16], CryptoError> {
     let nonce = nonce.as_ref().into();
-    let key = Key::<Aes256Gcm>::from_slice(key.as_bytes());
+    let key = Key::<Aes256Gcm>::from_slice(key.as_ref());
     let mut cipher = Aes256Gcm::new(key);
 
     let tag = cipher
@@ -127,14 +126,14 @@ pub(super) fn aesgcm_encrypt(
 }
 
 pub(super) fn aesgcm_decrypt(
-    key: &StaticSecret,
+    key: &Aes256GcmKey,
     nonce: &Nonce,
     aad: &[u8],
     tag: &[u8],
     buf: &mut [u8],
 ) -> Result<(), CryptoError> {
     let nonce = nonce.as_ref().into();
-    let key = Key::<Aes256Gcm>::from_slice(key.as_bytes());
+    let key = Key::<Aes256Gcm>::from_slice(key.as_ref());
     let mut cipher = Aes256Gcm::new(key);
     let tag = tag.into();
     cipher
