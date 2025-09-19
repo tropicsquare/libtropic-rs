@@ -8,6 +8,7 @@ use sha2::Digest as _;
 use tropic01::EccCurve;
 use tropic01::Error;
 use tropic01::Tropic01;
+use tropic01::X25519Dalek;
 use tropic01::keys::SH0PRIV;
 use tropic01::keys::SH0PUB;
 use x25519_dalek::PublicKey;
@@ -57,7 +58,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let ehpub = PublicKey::from(&ehpriv);
     let shpub = SH0PUB.into();
     let shpriv = SH0PRIV.into();
-    tropic01.session_start(shpub, shpriv, ehpub, ehpriv, 0)?;
+    tropic01.session_start(&X25519Dalek, shpub, shpriv, ehpub, ehpriv, 0)?;
 
     let res = tropic01.get_random_value(6)?;
     println!("random value get: {res:x?}");

@@ -6,8 +6,6 @@ use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::ErrorType as SpiErrorType;
 use embedded_hal::spi::SpiDevice;
 use nom_derive::Nom;
-use x25519_dalek::PublicKey;
-use x25519_dalek::StaticSecret;
 use zerocopy::BE;
 use zerocopy::IntoBytes;
 use zerocopy::U16;
@@ -27,6 +25,7 @@ use crate::L3_TAG_SIZE;
 use crate::Nonce;
 use crate::crc16::Crc16;
 use crate::crypto::CryptoError;
+use crate::crypto::X25519;
 use crate::crypto::aesgcm_decrypt;
 use crate::crypto::hkdf;
 use crate::crypto::sha256_sequence;
@@ -292,18 +291,19 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
     /// - shipriv: Secret host private key corresponding to slot `pkey_index`
     /// - ehpub: Ephemeral public key
     /// - ehpriv: Ephemeral private key
-    pub fn session_start(
+    pub fn session_start<X: X25519>(
         &mut self,
-        shipub: PublicKey,
-        shipriv: StaticSecret,
-        ehpub: PublicKey,
-        ehpriv: StaticSecret,
+        x25519: &X,
+        shipub: X::PublicKey,
+        shipriv: X::StaticSecret,
+        ehpub: X::PublicKey,
+        ehpriv: X::StaticSecret,
         pkey_index: u8,
     ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
         let cert = self.get_info_cert()?;
         let stpub = *cert.public_key().map_err(|_| Error::InvalidPublicKey)?;
 
-        let hdshk = self.handshake_req(ehpub, 0)?;
+        let hdshk = self.handshake_req::<X>(ehpub, 0)?;
         let etpub: [u8; 32] = hdshk
             .etpub
             .try_into()
@@ -316,6 +316,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
             .expect("response to contain authentication tag (16 bytes)");
 
         let (kcmd, kres) = process_handshake(
+            x25519,
             etpub.into(),
             ehpub,
             ehpriv,
@@ -332,15 +333,15 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         Ok(())
     }
 
-    fn handshake_req(
+    fn handshake_req<X: X25519>(
         &mut self,
-        ehpub: PublicKey,
+        ehpub: X::PublicKey,
         pkey_index: u8,
     ) -> Result<
         HandShakeResponse<'_>,
         Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>,
     > {
-        let data = [&ehpub.as_bytes()[..], &[pkey_index][..]];
+        let data = [ehpub.as_ref(), &[pkey_index][..]];
         let frame = L2RequestFrame::new(L2RequestId::HandshakeReq as u8, &data[..]);
         let res = l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs)?;
 
@@ -517,36 +518,37 @@ fn get_info_req<'a, SPI: SpiDevice, CS: OutputPin>(
 }
 
 #[expect(clippy::too_many_arguments)]
-fn process_handshake(
-    etpub: PublicKey,
-    ehpub: PublicKey,
-    ehpriv: StaticSecret,
-    shipub: PublicKey,
-    shipriv: StaticSecret,
-    stpub: PublicKey,
+fn process_handshake<X: X25519>(
+    x25519: &X,
+    etpub: X::PublicKey,
+    ehpub: X::PublicKey,
+    ehpriv: X::StaticSecret,
+    shipub: X::PublicKey,
+    shipriv: X::StaticSecret,
+    stpub: X::PublicKey,
     ttauth: [u8; L3_TAG_SIZE],
     pkey_index: u8,
 ) -> Result<(Aes256GcmKey, Aes256GcmKey), CryptoError> {
     let hash = sha256_sequence(
         PROTOCOL_NAME,
-        shipub.as_bytes(),
-        stpub.as_bytes(),
-        ehpub.as_bytes(),
+        shipub.as_ref(),
+        stpub.as_ref(),
+        ehpub.as_ref(),
         pkey_index,
-        etpub.as_bytes(),
+        etpub.as_ref(),
     );
 
     // ck = HKDF (ck, X25519(EHPRIV, ETPUB), 1)
-    let shared_secret = ehpriv.diffie_hellman(&etpub);
-    let (output_1, _output_2) = hkdf(PROTOCOL_NAME.into(), shared_secret.as_bytes());
+    let shared_secret = x25519.diffie_hellman(&ehpriv, &etpub);
+    let (output_1, _output_2) = hkdf(PROTOCOL_NAME.into(), shared_secret.as_ref());
 
     // ck = HKDF (ck, X25519(SHiPRIV, ETPUB), 1)
-    let shared_secret = shipriv.diffie_hellman(&etpub);
-    let (output_1, _output_2) = hkdf((&output_1).into(), shared_secret.as_bytes());
+    let shared_secret = x25519.diffie_hellman(&shipriv, &etpub);
+    let (output_1, _output_2) = hkdf((&output_1).into(), shared_secret.as_ref());
 
     // ck, kAUTH = HKDF (ck, X25519(EHPRIV, STPUB), 2)
-    let shared_secret = ehpriv.diffie_hellman(&stpub);
-    let (output_1, kauth) = hkdf((&output_1).into(), shared_secret.as_bytes());
+    let shared_secret = x25519.diffie_hellman(&ehpriv, &stpub);
+    let (output_1, kauth) = hkdf((&output_1).into(), shared_secret.as_ref());
 
     let (kcmd, kres) = hkdf((&output_1).into(), b"");
 
@@ -577,6 +579,7 @@ mod test {
     use crate::Aes256GcmKey;
     use crate::FromBytes;
     use crate::Nonce;
+    use crate::crypto::X25519Dalek;
     use crate::crypto::aesgcm_decrypt;
     use crate::crypto::hkdf;
     use crate::crypto::sha256_sequence;
@@ -749,6 +752,7 @@ mod test {
         .unwrap();
 
         let (kcmd_test, kres_test) = process_handshake(
+            &X25519Dalek,
             etpub,
             ehpub.into(),
             ehpriv,
