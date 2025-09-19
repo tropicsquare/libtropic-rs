@@ -15,6 +15,8 @@ use zerocopy::IntoBytes;
 use zeroize::Zeroize;
 
 pub use crate::crypto::CryptoError;
+pub use crate::crypto::X25519;
+pub use crate::crypto::X25519Dalek;
 pub use crate::lt_2::ResponseStatus;
 pub use crate::lt_2::SleepReq;
 pub use crate::lt_2::StartupReq;

@@ -14,6 +14,35 @@ use crate::Nonce;
 
 type HmacSha256 = Hmac<Sha256>;
 
+pub trait X25519 {
+    type PublicKey: AsRef<[u8]> + Copy + From<[u8; 32]>;
+    type StaticSecret;
+    type SharedSecret: AsRef<[u8]>;
+
+    fn diffie_hellman(
+        &self,
+        private_key: &Self::StaticSecret,
+        public_key: &Self::PublicKey,
+    ) -> Self::SharedSecret;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct X25519Dalek;
+
+impl X25519 for X25519Dalek {
+    type PublicKey = x25519_dalek::PublicKey;
+    type SharedSecret = x25519_dalek::SharedSecret;
+    type StaticSecret = x25519_dalek::StaticSecret;
+
+    fn diffie_hellman(
+        &self,
+        private_key: &Self::StaticSecret,
+        public_key: &Self::PublicKey,
+    ) -> Self::SharedSecret {
+        private_key.diffie_hellman(public_key)
+    }
+}
+
 /// Represents all errors that can happen during encryption and decryption of L3
 /// commands and results.
 #[derive(Debug, derive_more::Display, derive_more::Error)]
