@@ -26,9 +26,11 @@ pub trait X25519 {
     ) -> Self::SharedSecret;
 }
 
+#[cfg(feature = "x25519-dalek")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct X25519Dalek;
 
+#[cfg(feature = "x25519-dalek")]
 impl X25519 for X25519Dalek {
     type PublicKey = x25519_dalek::PublicKey;
     type SharedSecret = x25519_dalek::SharedSecret;
