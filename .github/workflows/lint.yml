@@ -1,0 +1,17 @@
+name: Run rustfmt and clippy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Check formatting
+      run: cargo fmt --all --check
+    - name: Check clippy lints
+      run: cargo clippy --workspace --all-features --all-targets -- --deny warnings
