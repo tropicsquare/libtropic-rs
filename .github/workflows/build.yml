@@ -1,0 +1,24 @@
+name: Build and test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v5
+    - name: Build tropic01
+      run: |
+        cargo build --package tropic01 --no-default-features
+        cargo build --package tropic01
+        cargo build --package tropic01 --all-features
+    - name: Build tropic01-example-rpi
+      run: |
+        cargo build --package tropic01-example-rpi
+    - name: Run tests
+      run: cargo test
+
