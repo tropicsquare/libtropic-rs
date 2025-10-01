@@ -22,3 +22,16 @@ jobs:
     - name: Run tests
       run: cargo test
 
+  build-no-std:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_BUILD_TARGET: thumbv8m.main-none-eabi
+    steps:
+    - uses: actions/checkout@v5
+    - name: Install ${{ env.CARGO_BUILD_TARGET }} target
+      run: rustup target add ${CARGO_BUILD_TARGET}
+    - name: Build tropic01
+      run: |
+        cargo build --package tropic01 --no-default-features
+        cargo build --package tropic01
+        cargo build --package tropic01 --all-features
