@@ -8,8 +8,15 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - beta
+          - nightly
     steps:
     - uses: actions/checkout@v5
+    - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
     - name: Build tropic01
       run: |
         cargo build --package tropic01 --no-default-features
@@ -23,10 +30,17 @@ jobs:
 
   build-no-std:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          - stable
+          - beta
+          - nightly
     env:
       CARGO_BUILD_TARGET: thumbv8m.main-none-eabi
     steps:
     - uses: actions/checkout@v5
+    - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
     - name: Install ${{ env.CARGO_BUILD_TARGET }} target
       run: rustup target add ${CARGO_BUILD_TARGET}
     - name: Build tropic01
