@@ -3,14 +3,20 @@ name: Run rustfmt and clippy
 on:
   pull_request:
   push:
-    branches: [main, master]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain:
+          - nightly
     steps:
     - uses: actions/checkout@v5
+    - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
+    - run: rustup component add rustfmt
+    - run: rustup component add clippy
     - name: Check formatting
       run: cargo fmt --all --check
     - name: Check clippy lints
