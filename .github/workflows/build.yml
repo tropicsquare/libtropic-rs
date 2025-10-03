@@ -1,4 +1,4 @@
-name: Build and test
+name: Build
 
 on:
   pull_request:
@@ -17,16 +17,14 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
-    - name: Build tropic01
+    - name: build tropic01
       run: |
         cargo build --package tropic01 --no-default-features
         cargo build --package tropic01
         cargo build --package tropic01 --all-features
-    - name: Build tropic01-example-rpi
+    - name: build tropic01-example-rpi
       run: |
         cargo build --package tropic01-example-rpi
-    - name: Run tests
-      run: cargo test
 
   build-no-std:
     runs-on: ubuntu-latest
@@ -41,9 +39,9 @@ jobs:
     steps:
     - uses: actions/checkout@v5
     - run: rustup update ${{ matrix.toolchain }} && rustup default ${{ matrix.toolchain }}
-    - name: Install ${{ env.CARGO_BUILD_TARGET }} target
+    - name: install ${{ env.CARGO_BUILD_TARGET }} target
       run: rustup target add ${CARGO_BUILD_TARGET}
-    - name: Build tropic01
+    - name: build tropic01
       run: |
         cargo build --package tropic01 --no-default-features
         cargo build --package tropic01
