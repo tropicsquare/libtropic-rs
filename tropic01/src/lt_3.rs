@@ -311,3 +311,40 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
             .expect("signature to be 64 bytes long"))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    /// Verifies that L3 command IDs match the TROPIC01 specification.
+    /// Reference: libtropic C SDK `src/lt_l3_api_structs.h`
+    #[test]
+    fn test_l3_command_ids_match_spec() {
+        assert_eq!(L3CmdId::Ping as u8, 0x01, "PING command ID mismatch");
+        assert_eq!(
+            L3CmdId::RandomValueGet as u8,
+            0x50,
+            "RANDOM_VALUE_GET command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::EccKeyGenerate as u8,
+            0x60,
+            "ECC_KEY_GENERATE command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::EccKeyRead as u8,
+            0x62,
+            "ECC_KEY_READ command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::EcDSASign as u8,
+            0x70,
+            "ECDSA_SIGN command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::EdDSASign as u8,
+            0x71,
+            "EDDSA_SIGN command ID mismatch"
+        );
+    }
+}
