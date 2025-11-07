@@ -59,6 +59,7 @@ impl<'a> EncryptedL3CommandPacket<'a> {
 enum L3CmdId {
     Ping = 0x01,
     RandomValueGet = 0x50,
+    EccKeyGenerate = 0x60,
     EccKeyRead = 0x62,
     EcDSASign = 0x70,
     EdDSASign = 0x71,
@@ -254,7 +255,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         curve: EccCurve,
     ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
         let data = [slot.as_bytes(), &[curve as u8]];
-        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::EcDSASign as u8, &data[..]);
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::EccKeyGenerate as u8, &data[..]);
         self.lt_l3_transfer(cmd_raw)?;
         Ok(())
     }
