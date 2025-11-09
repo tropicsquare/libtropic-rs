@@ -252,7 +252,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
 
     pub fn ecc_key_generate(
         &mut self,
-        slot: zerocopy::big_endian::U16,
+        slot: zerocopy::little_endian::U16,
         curve: EccCurve,
     ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
         let data = [slot.as_bytes(), &[curve as u8]];
@@ -263,7 +263,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
 
     pub fn ecc_key_read(
         &mut self,
-        slot: zerocopy::big_endian::U16,
+        slot: zerocopy::little_endian::U16,
     ) -> Result<
         EccKeyReadResponse<'_>,
         Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>,
@@ -276,7 +276,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
 
     pub fn ecc_key_erase(
         &mut self,
-        slot: zerocopy::big_endian::U16,
+        slot: zerocopy::little_endian::U16,
     ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
         let data = [slot.as_bytes()];
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::EccKeyErase as u8, &data[..]);
@@ -286,7 +286,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
 
     pub fn ecdsa_sign(
         &mut self,
-        slot: zerocopy::big_endian::U16,
+        slot: zerocopy::little_endian::U16,
         hash: &[u8; 32],
     ) -> Result<&[u8; 64], Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
         let padding = [0; 13];
@@ -303,7 +303,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
 
     pub fn eddsa_sign(
         &mut self,
-        slot: zerocopy::big_endian::U16,
+        slot: zerocopy::little_endian::U16,
         msg: &[u8],
     ) -> Result<&[u8; 64], Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
         if msg.len() > L3_CMD_DATA_SIZE_MAX {
