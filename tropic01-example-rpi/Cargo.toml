@@ -22,11 +22,13 @@ tropic01 = { path = "../tropic01", default-features = false, features = [
 anyhow = { version = "1.0.98", default-features = false }
 ed25519-dalek = { version = "2.2.0", default-features = false }
 env_logger = { version = "0.11.8", default-features = false }
-linux-embedded-hal = { version = "0.4.0", default-features = false, features = ["spi"] }
 rand_core = { version = "0.6.4", default-features = false, features = ["getrandom"] }
-rppal = { version = "0.22.1", features = ["embedded-hal"] }
 x25519-dalek = { version = "2.0.1", default-features = false, features = [
   "static_secrets",
 ] }
 sha2 = { version = "0.10.9", default-features = false }
 tokio = { version = "1.45.1", features = ["full"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+linux-embedded-hal = { version = "0.4.0", default-features = false, features = ["spi"] }
+rppal = { version = "0.22.1", features = ["embedded-hal"] }
