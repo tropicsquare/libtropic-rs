@@ -303,7 +303,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         let cert = self.get_info_cert()?;
         let stpub = *cert.public_key().map_err(|_| Error::InvalidPublicKey)?;
 
-        let hdshk = self.handshake_req::<X>(ehpub, 0)?;
+        let hdshk = self.handshake_req::<X>(ehpub, pkey_index)?;
         let etpub: [u8; 32] = hdshk
             .etpub
             .try_into()
