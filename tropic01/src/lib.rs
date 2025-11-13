@@ -25,6 +25,8 @@ pub use crate::lt_2::X509Certificate;
 pub use crate::lt_3::EccCurve;
 pub use crate::lt_3::EccKeyReadResponse;
 pub use crate::lt_3::EccOrigin;
+pub use crate::lt_3::MCOUNTER_VALUE_MAX;
+pub use crate::lt_3::MCounterIndex;
 
 mod crc16;
 mod crypto;
@@ -188,6 +190,10 @@ pub enum Error<ESpi, EGpio> {
     InvalidL3Cmd,
     #[display("Invalid public key in chip certificate")]
     InvalidPublicKey,
+    #[display("Invalid parameter")]
+    InvalidParameter,
+    #[display("Invalid response from chip")]
+    InvalidResponse,
     #[display("Error during processing of L2 cmd: {_0}")]
     L2ResponseError(ResponseStatus),
     #[display("Error during processing of L3 cmd")]

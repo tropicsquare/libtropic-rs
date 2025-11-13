@@ -64,6 +64,9 @@ enum L3CmdId {
     EccKeyErase = 0x63,
     EcDSASign = 0x70,
     EdDSASign = 0x71,
+    MCounterInit = 0x80,
+    MCounterUpdate = 0x81,
+    MCounterGet = 0x82,
 }
 
 /// Represents all kinds of curves the chip supports.
@@ -73,6 +76,31 @@ pub enum EccCurve {
     P256 = 0x01,
     Ed25519 = 0x02,
 }
+
+/// Monotonic counter index (0-15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u16)]
+pub enum MCounterIndex {
+    Index0 = 0,
+    Index1 = 1,
+    Index2 = 2,
+    Index3 = 3,
+    Index4 = 4,
+    Index5 = 5,
+    Index6 = 6,
+    Index7 = 7,
+    Index8 = 8,
+    Index9 = 9,
+    Index10 = 10,
+    Index11 = 11,
+    Index12 = 12,
+    Index13 = 13,
+    Index14 = 14,
+    Index15 = 15,
+}
+
+/// Maximum allowed value for monotonic counter.
+pub const MCOUNTER_VALUE_MAX: u32 = 0xFFFF_FFFE;
 
 impl EccCurve {
     const fn key_len(self) -> usize {
@@ -321,6 +349,81 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
             // Safety: Expect is safe here because SignResponse verifies the signature length.
             .expect("signature to be 64 bytes long"))
     }
+
+    /// Initialize a monotonic counter with a specific value.
+    ///
+    /// # Arguments
+    /// * `index` - Counter index (0-15)
+    /// * `value` - Initial value (0 to `MCOUNTER_VALUE_MAX`)
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err` if the counter value is out of range
+    pub fn mcounter_init(
+        &mut self,
+        index: MCounterIndex,
+        value: u32,
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if value > MCOUNTER_VALUE_MAX {
+            return Err(Error::InvalidParameter);
+        }
+
+        let index_bytes = (index as u16).to_le_bytes();
+        let padding = [0u8; 1];
+        let value_bytes = value.to_le_bytes();
+        let data = [&index_bytes[..], &padding[..], &value_bytes[..]];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::MCounterInit as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Decrement a monotonic counter by 1.
+    ///
+    /// # Arguments
+    /// * `index` - Counter index (0-15)
+    ///
+    /// # Returns
+    /// * `Ok(())` on success
+    /// * `Err` if the counter is already at 0
+    pub fn mcounter_update(
+        &mut self,
+        index: MCounterIndex,
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let index_bytes = (index as u16).to_le_bytes();
+
+        let data = [&index_bytes[..]];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::MCounterUpdate as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Read the current value of a monotonic counter.
+    ///
+    /// # Arguments
+    /// * `index` - Counter index (0-15)
+    ///
+    /// # Returns
+    /// * `Ok(value)` - Current counter value
+    /// * `Err` if the command's response is too short
+    pub fn mcounter_get(
+        &mut self,
+        index: MCounterIndex,
+    ) -> Result<u32, Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let index_bytes = (index as u16).to_le_bytes();
+
+        let data = [&index_bytes[..]];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::MCounterGet as u8, &data[..]);
+        let res = self.lt_l3_transfer(cmd_raw)?;
+
+        // Response contains 1 byte result + 4 bytes counter value (little-endian)
+        if res.data.len() < 4 {
+            return Err(Error::InvalidResponse);
+        }
+
+        let value = u32::from_le_bytes([res.data[3], res.data[4], res.data[5], res.data[6]]);
+
+        Ok(value)
+    }
 }
 
 #[cfg(test)]
@@ -361,6 +464,21 @@ mod test {
             L3CmdId::EdDSASign as u8,
             0x71,
             "EDDSA_SIGN command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::MCounterInit as u8,
+            0x80,
+            "MCOUNTER_INIT command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::MCounterUpdate as u8,
+            0x81,
+            "MCOUNTER_UPDATE command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::MCounterGet as u8,
+            0x82,
+            "MCOUNTER_GET command ID mismatch"
         );
     }
 }
