@@ -131,6 +131,12 @@ pub enum ParsingError {
     InvalidData,
 }
 
+impl<T: core::fmt::Debug> From<derive_more::TryFromReprError<T>> for ParsingError {
+    fn from(_: derive_more::TryFromReprError<T>) -> Self {
+        Self::InvalidData
+    }
+}
+
 /// Trait for parsing types from byte slices.
 trait FromBytes<'a>
 where

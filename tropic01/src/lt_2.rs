@@ -56,8 +56,18 @@ enum L2RequestId {
 }
 
 /// Represents all possible response status codes the chip may return.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::TryFrom,
+    derive_more::Display,
+    derive_more::Error,
+)]
 #[repr(u8)]
+#[try_from(repr)]
 pub enum ResponseStatus {
     ReqOk = 0x01,
     ResOk = 0x02,
@@ -89,30 +99,10 @@ pub enum ResponseStatus {
     NoResp = 0xff,
 }
 
-impl ResponseStatus {
-    const fn from_u8(b: u8) -> Result<Self, ParsingError> {
-        match b {
-            0x01 => Ok(Self::ReqOk),
-            0x02 => Ok(Self::ResOk),
-            0x03 => Ok(Self::ReqCont),
-            0x04 => Ok(Self::ResCont),
-            0x78 => Ok(Self::RespDisabled),
-            0x79 => Ok(Self::HskErr),
-            0x7a => Ok(Self::NoSession),
-            0x7b => Ok(Self::TagErr),
-            0x7c => Ok(Self::CrcErr),
-            0x7e => Ok(Self::UnknownReq),
-            0x7f => Ok(Self::GenErr),
-            0xff => Ok(Self::NoResp),
-            _ => Err(ParsingError::InvalidData),
-        }
-    }
-}
-
 impl<'a> FromBytes<'a> for ResponseStatus {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
         let (_, b) = take_u8(slice)?;
-        Self::from_u8(b)
+        Ok(Self::try_from(b)?)
     }
 }
 #[derive(Clone, Debug, IntoBytes, Unaligned)]
@@ -157,7 +147,7 @@ impl<'a> FromBytes<'a> for L2ResponseFrame<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
         let (rest, chip_status) = take_u8(slice)?;
         let (rest, status_byte) = take_u8(rest)?;
-        let resp_status = ResponseStatus::from_u8(status_byte)?;
+        let resp_status = ResponseStatus::try_from(status_byte)?;
         let (rest, len) = take_u8(rest)?;
         let (rest, resp_data) = take(rest, len as usize)?;
         let (_, crc) = take_be_u16(rest)?;
