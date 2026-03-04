@@ -61,8 +61,20 @@ impl<'a> EncryptedL3CommandPacket<'a> {
 #[repr(u8)]
 enum L3CmdId {
     Ping = 0x01,
+    PairingKeyWrite = 0x10,
+    PairingKeyRead = 0x11,
+    PairingKeyInvalidate = 0x12,
+    RConfigWrite = 0x20,
+    RConfigRead = 0x21,
+    RConfigErase = 0x22,
+    IConfigWrite = 0x30,
+    IConfigRead = 0x31,
+    RMemDataWrite = 0x40,
+    RMemDataRead = 0x41,
+    RMemDataErase = 0x42,
     RandomValueGet = 0x50,
     EccKeyGenerate = 0x60,
+    EccKeyStore = 0x61,
     EccKeyRead = 0x62,
     EccKeyErase = 0x63,
     EcDSASign = 0x70,
@@ -70,7 +82,17 @@ enum L3CmdId {
     MCounterInit = 0x80,
     MCounterUpdate = 0x81,
     MCounterGet = 0x82,
+    MacAndDestroy = 0x90,
 }
+
+/// Maximum ECC slot index.
+pub const ECC_SLOT_MAX: u16 = 31;
+/// Maximum R_MEM_DATA slot index.
+pub const R_MEM_DATA_SLOT_MAX: u16 = 511;
+/// Maximum pairing key slot index.
+pub const PAIRING_KEY_SLOT_MAX: u16 = 3;
+/// Maximum MAC-and-destroy slot index.
+pub const MAC_AND_DESTROY_SLOT_MAX: u16 = 127;
 
 /// Represents all kinds of curves the chip supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
@@ -180,7 +202,14 @@ enum L3ResultStatus {
     Fail = 0x3c,
     Unauthorized = 0x01,
     InvalidCmd = 0x02,
+    SlotNotEmpty = 0x10,
+    SlotExpired = 0x11,
     InvalidKey = 0x12,
+    UpdateErr = 0x13,
+    CounterInvalid = 0x14,
+    SlotEmpty = 0x15,
+    SlotInvalid = 0x16,
+    HardwareFail = 0x17,
 }
 
 /// Represents all kinds of origins the chip supports.
@@ -310,11 +339,16 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         match res.result {
             L3ResultStatus::Ok => (),
             L3ResultStatus::Fail => return Err(Error::L3CmdFailed),
-            L3ResultStatus::InvalidCmd => {
-                return Err(Error::InvalidL3Cmd);
-            },
+            L3ResultStatus::InvalidCmd => return Err(Error::InvalidL3Cmd),
             L3ResultStatus::InvalidKey => return Err(Error::InvalidKey),
             L3ResultStatus::Unauthorized => return Err(Error::Unauthorized),
+            L3ResultStatus::SlotNotEmpty => return Err(Error::SlotNotEmpty),
+            L3ResultStatus::SlotExpired => return Err(Error::SlotExpired),
+            L3ResultStatus::UpdateErr => return Err(Error::UpdateErr),
+            L3ResultStatus::CounterInvalid => return Err(Error::CounterInvalid),
+            L3ResultStatus::SlotEmpty => return Err(Error::SlotEmpty),
+            L3ResultStatus::SlotInvalid => return Err(Error::SlotInvalid),
+            L3ResultStatus::HardwareFail => return Err(Error::HardwareFail),
         }
 
         Ok(res)
@@ -489,6 +523,222 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
 
         Ok(value)
     }
+
+    /// Store an ECC key in the given slot.
+    pub fn ecc_key_store(
+        &mut self,
+        slot: zerocopy::little_endian::U16,
+        curve: EccCurve,
+        key: &[u8; 32],
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if slot.get() > ECC_SLOT_MAX {
+            return Err(Error::InvalidParameter);
+        }
+        let padding = [0u8; 12];
+        let data = [slot.as_bytes(), &[curve as u8], &padding[..], &key[..]];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::EccKeyStore as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Write data to an R_MEM_DATA slot.
+    pub fn r_mem_data_write(
+        &mut self,
+        slot: zerocopy::little_endian::U16,
+        data: &[u8],
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if slot.get() > R_MEM_DATA_SLOT_MAX {
+            return Err(Error::InvalidParameter);
+        }
+        if data.is_empty() {
+            return Err(Error::InvalidParameter);
+        }
+        let padding = [0u8; 1];
+        let cmd_data = [slot.as_bytes(), &padding[..], data];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::RMemDataWrite as u8, &cmd_data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Read data from an R_MEM_DATA slot.
+    pub fn r_mem_data_read(
+        &mut self,
+        slot: zerocopy::little_endian::U16,
+    ) -> Result<&[u8], Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if slot.get() > R_MEM_DATA_SLOT_MAX {
+            return Err(Error::InvalidParameter);
+        }
+        let data = [slot.as_bytes()];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::RMemDataRead as u8, &data[..]);
+        let res = self.lt_l3_transfer(cmd_raw)?;
+        // Skip 3 bytes padding
+        if res.data.len() < 3 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(&res.data[3..])
+    }
+
+    /// Erase an R_MEM_DATA slot.
+    pub fn r_mem_data_erase(
+        &mut self,
+        slot: zerocopy::little_endian::U16,
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if slot.get() > R_MEM_DATA_SLOT_MAX {
+            return Err(Error::InvalidParameter);
+        }
+        let data = [slot.as_bytes()];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::RMemDataErase as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Write a value to an R_CONFIG address.
+    pub fn r_config_write(
+        &mut self,
+        address: zerocopy::little_endian::U16,
+        value: u32,
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let padding = [0u8; 1];
+        let value_bytes = value.to_le_bytes();
+        let data = [address.as_bytes(), &padding[..], &value_bytes[..]];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::RConfigWrite as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Read a value from an R_CONFIG address.
+    pub fn r_config_read(
+        &mut self,
+        address: zerocopy::little_endian::U16,
+    ) -> Result<u32, Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let data = [address.as_bytes()];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::RConfigRead as u8, &data[..]);
+        let res = self.lt_l3_transfer(cmd_raw)?;
+        // Skip 3 bytes padding, read u32 LE
+        if res.data.len() < 7 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(u32::from_le_bytes([
+            res.data[3],
+            res.data[4],
+            res.data[5],
+            res.data[6],
+        ]))
+    }
+
+    /// Erase R_CONFIG.
+    pub fn r_config_erase(
+        &mut self,
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let data = [];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::RConfigErase as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Write a bit to an I_CONFIG address.
+    pub fn i_config_write(
+        &mut self,
+        address: zerocopy::little_endian::U16,
+        bit_index: u8,
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let data = [address.as_bytes(), &[bit_index][..]];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::IConfigWrite as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Read a value from an I_CONFIG address.
+    pub fn i_config_read(
+        &mut self,
+        address: zerocopy::little_endian::U16,
+    ) -> Result<u32, Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let data = [address.as_bytes()];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::IConfigRead as u8, &data[..]);
+        let res = self.lt_l3_transfer(cmd_raw)?;
+        // Skip 3 bytes padding, read u32 LE
+        if res.data.len() < 7 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(u32::from_le_bytes([
+            res.data[3],
+            res.data[4],
+            res.data[5],
+            res.data[6],
+        ]))
+    }
+
+    /// Write a pairing key to the given slot.
+    pub fn pairing_key_write(
+        &mut self,
+        slot: zerocopy::little_endian::U16,
+        s_hipub: &[u8; 32],
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if slot.get() > PAIRING_KEY_SLOT_MAX {
+            return Err(Error::InvalidParameter);
+        }
+        let padding = [0u8; 1];
+        let data = [slot.as_bytes(), &padding[..], &s_hipub[..]];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::PairingKeyWrite as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Read a pairing key from the given slot.
+    pub fn pairing_key_read(
+        &mut self,
+        slot: zerocopy::little_endian::U16,
+    ) -> Result<&[u8; 32], Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if slot.get() > PAIRING_KEY_SLOT_MAX {
+            return Err(Error::InvalidParameter);
+        }
+        let data = [slot.as_bytes()];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::PairingKeyRead as u8, &data[..]);
+        let res = self.lt_l3_transfer(cmd_raw)?;
+        // Skip 3 bytes padding, read 32 bytes
+        if res.data.len() < 35 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(res.data[3..35]
+            .try_into()
+            .expect("pairing key to be 32 bytes"))
+    }
+
+    /// Invalidate a pairing key slot.
+    pub fn pairing_key_invalidate(
+        &mut self,
+        slot: zerocopy::little_endian::U16,
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if slot.get() > PAIRING_KEY_SLOT_MAX {
+            return Err(Error::InvalidParameter);
+        }
+        let data = [slot.as_bytes()];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::PairingKeyInvalidate as u8, &data[..]);
+        self.lt_l3_transfer(cmd_raw)?;
+        Ok(())
+    }
+
+    /// Perform a MAC-and-destroy operation.
+    pub fn mac_and_destroy(
+        &mut self,
+        slot: zerocopy::little_endian::U16,
+        data_in: &[u8; 32],
+    ) -> Result<&[u8; 32], Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        if slot.get() > MAC_AND_DESTROY_SLOT_MAX {
+            return Err(Error::InvalidParameter);
+        }
+        let padding = [0u8; 1];
+        let data = [slot.as_bytes(), &padding[..], &data_in[..]];
+        let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::MacAndDestroy as u8, &data[..]);
+        let res = self.lt_l3_transfer(cmd_raw)?;
+        // Skip 3 bytes padding, read 32 bytes
+        if res.data.len() < 35 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(res.data[3..35]
+            .try_into()
+            .expect("mac_and_destroy result to be 32 bytes"))
+    }
 }
 
 #[cfg(test)]
@@ -501,6 +751,61 @@ mod test {
     fn test_l3_command_ids_match_spec() {
         assert_eq!(L3CmdId::Ping as u8, 0x01, "PING command ID mismatch");
         assert_eq!(
+            L3CmdId::PairingKeyWrite as u8,
+            0x10,
+            "PAIRING_KEY_WRITE command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::PairingKeyRead as u8,
+            0x11,
+            "PAIRING_KEY_READ command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::PairingKeyInvalidate as u8,
+            0x12,
+            "PAIRING_KEY_INVALIDATE command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::RConfigWrite as u8,
+            0x20,
+            "R_CONFIG_WRITE command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::RConfigRead as u8,
+            0x21,
+            "R_CONFIG_READ command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::RConfigErase as u8,
+            0x22,
+            "R_CONFIG_ERASE command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::IConfigWrite as u8,
+            0x30,
+            "I_CONFIG_WRITE command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::IConfigRead as u8,
+            0x31,
+            "I_CONFIG_READ command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::RMemDataWrite as u8,
+            0x40,
+            "R_MEM_DATA_WRITE command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::RMemDataRead as u8,
+            0x41,
+            "R_MEM_DATA_READ command ID mismatch"
+        );
+        assert_eq!(
+            L3CmdId::RMemDataErase as u8,
+            0x42,
+            "R_MEM_DATA_ERASE command ID mismatch"
+        );
+        assert_eq!(
             L3CmdId::RandomValueGet as u8,
             0x50,
             "RANDOM_VALUE_GET command ID mismatch"
@@ -511,6 +816,11 @@ mod test {
             "ECC_KEY_GENERATE command ID mismatch"
         );
         assert_eq!(
+            L3CmdId::EccKeyStore as u8,
+            0x61,
+            "ECC_KEY_STORE command ID mismatch"
+        );
+        assert_eq!(
             L3CmdId::EccKeyRead as u8,
             0x62,
             "ECC_KEY_READ command ID mismatch"
@@ -518,7 +828,7 @@ mod test {
         assert_eq!(
             L3CmdId::EccKeyErase as u8,
             0x63,
-            "ECC_KEY_READ command ID mismatch"
+            "ECC_KEY_ERASE command ID mismatch"
         );
         assert_eq!(
             L3CmdId::EcDSASign as u8,
@@ -545,5 +855,27 @@ mod test {
             0x82,
             "MCOUNTER_GET command ID mismatch"
         );
+        assert_eq!(
+            L3CmdId::MacAndDestroy as u8,
+            0x90,
+            "MAC_AND_DESTROY command ID mismatch"
+        );
+    }
+
+    /// Verifies that L3 result status codes match the TROPIC01 specification.
+    #[test]
+    fn test_l3_result_status_values() {
+        assert_eq!(L3ResultStatus::Ok as u8, 0xc3);
+        assert_eq!(L3ResultStatus::Fail as u8, 0x3c);
+        assert_eq!(L3ResultStatus::Unauthorized as u8, 0x01);
+        assert_eq!(L3ResultStatus::InvalidCmd as u8, 0x02);
+        assert_eq!(L3ResultStatus::SlotNotEmpty as u8, 0x10);
+        assert_eq!(L3ResultStatus::SlotExpired as u8, 0x11);
+        assert_eq!(L3ResultStatus::InvalidKey as u8, 0x12);
+        assert_eq!(L3ResultStatus::UpdateErr as u8, 0x13);
+        assert_eq!(L3ResultStatus::CounterInvalid as u8, 0x14);
+        assert_eq!(L3ResultStatus::SlotEmpty as u8, 0x15);
+        assert_eq!(L3ResultStatus::SlotInvalid as u8, 0x16);
+        assert_eq!(L3ResultStatus::HardwareFail as u8, 0x17);
     }
 }

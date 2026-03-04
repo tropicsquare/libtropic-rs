@@ -17,15 +17,19 @@ pub use crate::crypto::X25519;
 #[cfg(feature = "x25519-dalek")]
 pub use crate::crypto::X25519Dalek;
 pub use crate::lt_2::BankId;
+pub use crate::lt_2::CertStore;
 pub use crate::lt_2::ResponseStatus;
 pub use crate::lt_2::SleepReq;
 pub use crate::lt_2::StartupReq;
-pub use crate::lt_2::X509Certificate;
+pub use crate::lt_3::ECC_SLOT_MAX;
 pub use crate::lt_3::EccCurve;
 pub use crate::lt_3::EccKeyReadResponse;
 pub use crate::lt_3::EccOrigin;
+pub use crate::lt_3::MAC_AND_DESTROY_SLOT_MAX;
 pub use crate::lt_3::MCOUNTER_VALUE_MAX;
 pub use crate::lt_3::MCounterIndex;
+pub use crate::lt_3::PAIRING_KEY_SLOT_MAX;
+pub use crate::lt_3::R_MEM_DATA_SLOT_MAX;
 
 mod crc16;
 mod crypto;
@@ -229,6 +233,20 @@ pub enum Error<ESpi, EGpio> {
     ParsingError(ParsingError),
     #[display("Request exceeded allowed max size")]
     RequestExceedsSize,
+    #[display("L3 slot already occupied")]
+    SlotNotEmpty,
+    #[display("L3 slot has expired")]
+    SlotExpired,
+    #[display("L3 update error")]
+    UpdateErr,
+    #[display("Monotonic counter invalid")]
+    CounterInvalid,
+    #[display("L3 slot is empty")]
+    SlotEmpty,
+    #[display("L3 slot is invalid")]
+    SlotInvalid,
+    #[display("Chip hardware failure")]
+    HardwareFail,
     #[display("Insufficient user access privileges")]
     Unauthorized,
     #[display("Chip returned unexpected response status")]

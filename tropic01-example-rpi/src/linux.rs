@@ -41,8 +41,8 @@ pub async fn run() -> Result<(), anyhow::Error> {
     println!("Sleep");
     tropic01.sleep_req(tropic01::SleepReq::Sleep)?;
 
-    let res = tropic01.get_info_cert()?;
-    println!("Cert: {res:x?}");
+    let res = tropic01.get_info_cert_store()?;
+    println!("CertStore: {res:x?}");
 
     println!("Reboot");
     tropic01.startup_req(tropic01::StartupReq::Reboot)?;

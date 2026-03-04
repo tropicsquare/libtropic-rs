@@ -38,7 +38,11 @@ use crate::take;
 use crate::take_be_u16;
 use crate::take_u8;
 
-const L2_GET_INFO_REQ_CERT_SIZE: usize = 512;
+const L2_GET_INFO_CERT_STORE_SIZE: usize = 3840;
+const L2_GET_INFO_BLOCK_LEN: usize = 128;
+const CERT_STORE_NUM_CERTS: usize = 4;
+const CERT_STORE_VERSION: u8 = 1;
+const CERT_STORE_HEADER_SIZE: usize = 2 + CERT_STORE_NUM_CERTS * 2;
 /// Protocol Name
 /// See section 7.4.1 of the datasheet, section `Protocol Name`.
 const PROTOCOL_NAME: &[u8; 32] = b"Noise_KK1_25519_AESGCM_SHA256\x00\x00\x00";
@@ -47,6 +51,7 @@ const PROTOCOL_NAME: &[u8; 32] = b"Noise_KK1_25519_AESGCM_SHA256\x00\x00\x00";
 #[repr(u8)]
 enum L2RequestId {
     EncryptedCmdReq = 0x04,
+    EncryptedSessionAbt = 0x08,
     GetInfo = 0x01,
     GetLog = 0xa2,
     HandshakeReq = 0x02,
@@ -199,31 +204,35 @@ pub enum PublicKeyError {
     PublicKeyNotFound,
 }
 
-/// The x509 certificate of the chip containing the public key.
+/// The certificate store from the chip, containing 4 X.509 certificates.
 #[derive(Debug)]
-pub struct X509Certificate<'a> {
-    data: &'a [u8; L2_GET_INFO_REQ_CERT_SIZE],
+pub struct CertStore<'a> {
+    data: &'a [u8],
+    cert_offsets: [(usize, usize); CERT_STORE_NUM_CERTS],
 }
 
-impl<'a> X509Certificate<'a> {
-    const fn new(data: &'a [u8; L2_GET_INFO_REQ_CERT_SIZE]) -> Self {
-        Self { data }
+impl<'a> CertStore<'a> {
+    /// Return certificate `index` (0=Device, 1=XXXX, 2=TROPIC01, 3=Root).
+    #[must_use]
+    pub fn cert(&self, index: usize) -> Option<&'a [u8]> {
+        let (start, len) = *self.cert_offsets.get(index)?;
+        self.data.get(start..start + len)
     }
 
-    /// Return the public key
+    /// Return the device certificate public key (from cert 0).
     pub fn public_key(&self) -> Result<&[u8; 32], PublicKeyError> {
+        let cert = self.cert(0).ok_or(PublicKeyError::PublicKeyNotFound)?;
         // TODO consider using appropriate ASN.1 DER parsing for this
         let seq = [0x65, 0x6e, 0x03, 0x21];
         let len = seq.len();
-        let pos = self
-            .data
+        let pos = cert
             .windows(len)
             .position(|window| window == seq)
             .ok_or(PublicKeyError::PublicKeyNotFound)?;
         let start = pos + len + 1; // +1 to remove leading '0' for uncompressed public key
-        self.data[start..start + 32]
-            .try_into()
-            .map_err(|_| PublicKeyError::PublicKeyNotFound)
+        cert.get(start..start + 32)
+            .and_then(|s| s.try_into().ok())
+            .ok_or(PublicKeyError::PublicKeyNotFound)
     }
 }
 
@@ -269,15 +278,13 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         get_info_req(req, block, &mut self.l2_buf, &mut self.spi, &mut self.cs)
     }
 
-    pub fn get_info_cert(
+    pub fn get_info_cert_store(
         &mut self,
-    ) -> Result<
-        X509Certificate<'_>,
-        Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>,
-    > {
+    ) -> Result<CertStore<'_>, Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>>
+    {
         self.l3_buf.clear();
-        self.l3_buf.extend(repeat_n(0, L2_GET_INFO_REQ_CERT_SIZE));
-        for (i, chunk) in self.l3_buf.chunks_mut(128).enumerate() {
+        self.l3_buf.extend(repeat_n(0, L2_GET_INFO_CERT_STORE_SIZE));
+        for (i, chunk) in self.l3_buf.chunks_mut(L2_GET_INFO_BLOCK_LEN).enumerate() {
             let res = get_info_req(
                 InfoReq::X509Certificate,
                 i as u8,
@@ -287,13 +294,28 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
             )?;
             chunk[..res.resp_data.len()].copy_from_slice(res.resp_data);
         }
-        Ok(X509Certificate::new(
-            self.l3_buf
-                .as_slice()
-                .try_into()
-                // Safety: Expect is safe since `l3_buf` has L2_GET_INFO_REQ_CERT_SIZE items
-                .expect("l3 buffer length to match certificate length"),
-        ))
+
+        let version = self.l3_buf[0];
+        if version != CERT_STORE_VERSION {
+            return Err(Error::InvalidResponse);
+        }
+        let num_certs = self.l3_buf[1] as usize;
+        if num_certs != CERT_STORE_NUM_CERTS {
+            return Err(Error::InvalidResponse);
+        }
+
+        let mut cert_offsets = [(0usize, 0usize); CERT_STORE_NUM_CERTS];
+        let mut offset = CERT_STORE_HEADER_SIZE;
+        for (i, entry) in cert_offsets.iter_mut().enumerate() {
+            let len = u16::from_be_bytes([self.l3_buf[2 + i * 2], self.l3_buf[3 + i * 2]]) as usize;
+            *entry = (offset, len);
+            offset += len;
+        }
+
+        Ok(CertStore {
+            data: self.l3_buf.as_slice(),
+            cert_offsets,
+        })
     }
 
     pub fn get_info_chip_id(
@@ -356,6 +378,23 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         Ok(())
     }
 
+    /// Abort the current secure session.
+    ///
+    /// Invalidates host session data and sends a session abort frame to the
+    /// chip.
+    pub fn session_abort(
+        &mut self,
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        self.session = None;
+        let data = [];
+        let frame = L2RequestFrame::new(L2RequestId::EncryptedSessionAbt as u8, &data[..]);
+        let res = l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs)?;
+        if res.len != 0 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(())
+    }
+
     /// Start a secure session
     ///
     /// Arguments:
@@ -372,7 +411,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         ehpriv: X::StaticSecret,
         pkey_index: u8,
     ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
-        let cert = self.get_info_cert()?;
+        let cert = self.get_info_cert_store()?;
         let stpub = *cert.public_key().map_err(|_| Error::InvalidPublicKey)?;
 
         let hdshk = self.handshake_req::<X>(ehpub, pkey_index)?;
