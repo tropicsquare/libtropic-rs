@@ -8,6 +8,7 @@
 
 - [tropic01](tropic01/README.md): A platform agnostic embedded-hal driver
 - [tropic01-example-rpi](tropic01-example-rpi/README.md): A demo app for Raspberry Pi
+- [tropic01-example-usb-devkit](tropic01-example-usb-devkit/README.md): A demo app for the TS1302 USB devkit
 
 ## License
 

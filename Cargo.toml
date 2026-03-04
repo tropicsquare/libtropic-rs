@@ -1,7 +1,7 @@
 [workspace]
 
 resolver = "3"
-members = ["tropic01", "tropic01-example-rpi"]
+members = ["tropic01", "tropic01-example-rpi", "tropic01-example-usb-devkit"]
 
 [workspace.package]
 authors = ["Filancore GmbH <info@filancore.com>"]
@@ -22,6 +22,9 @@ lto = "off"
 opt-level = 3
 
 [profile.dev.package.tropic01-example-rpi]
+opt-level = 3
+
+[profile.dev.package.tropic01-example-usb-devkit]
 opt-level = 3
 
 [workspace.lints.rust]

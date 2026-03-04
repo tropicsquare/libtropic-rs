@@ -1,0 +1,32 @@
+[package]
+name = "tropic01-example-usb-devkit"
+description = "Demo app for TROPIC01 secure chip via USB devkit (USB-to-SPI bridge)"
+version = "0.1.0"
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license-file = "LICENSE"
+publish = false
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+tropic01 = { path = "../tropic01", default-features = false, features = [
+  "keys",
+  "x25519-dalek",
+] }
+
+anyhow = { version = "1.0.98", default-features = false }
+embedded-hal = { version = "1", default-features = false }
+ed25519-dalek = { version = "2.2.0", default-features = false }
+env_logger = { version = "0.11.8", default-features = false }
+log = { version = "0.4", default-features = false }
+rand_core = { version = "0.6.4", default-features = false, features = ["getrandom"] }
+serialport = { version = "4.7.0", default-features = false }
+sha2 = { version = "0.10.9", default-features = false }
+x25519-dalek = { version = "2.0.1", default-features = false, features = [
+  "static_secrets",
+] }
