@@ -2,12 +2,13 @@ use embedded_hal::digital::ErrorType as GpioErrorType;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::ErrorType as SpiErrorType;
 use embedded_hal::spi::SpiDevice;
-use nom_derive::Nom;
 use zerocopy::IntoBytes;
 use zerocopy::little_endian::U16;
 
 use crate::Error;
 use crate::FromBytes;
+use crate::ParsingError;
+use crate::nom_err;
 use crate::L3_CMD_DATA_SIZE_MAX;
 use crate::L3_RES_SIZE_SIZE;
 use crate::L3_TAG_SIZE;
@@ -70,11 +71,28 @@ enum L3CmdId {
 }
 
 /// Represents all kinds of curves the chip supports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Nom)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EccCurve {
     P256 = 0x01,
     Ed25519 = 0x02,
+}
+
+impl EccCurve {
+    const fn from_u8(b: u8) -> Result<Self, ParsingError> {
+        match b {
+            0x01 => Ok(Self::P256),
+            0x02 => Ok(Self::Ed25519),
+            _ => Err(ParsingError::Error(nom::error::ErrorKind::MapOpt)),
+        }
+    }
+}
+
+impl<'a> FromBytes<'a> for EccCurve {
+    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+        let (_, b) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        Self::from_u8(b)
+    }
 }
 
 /// Monotonic counter index (0-15).
@@ -111,27 +129,48 @@ impl EccCurve {
     }
 }
 
-#[derive(Debug, Nom)]
+#[derive(Debug)]
 pub(super) struct L3ResultPacket<'a> {
-    #[nom(LittleEndian)]
     _size: u16,
-    #[nom(Take = "_size")]
     _ciphertext: &'a [u8],
     _tag: [u8; 16],
+}
+
+impl<'a> FromBytes<'a> for L3ResultPacket<'a> {
+    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+        let (rest, size) = nom::number::complete::le_u16(slice).map_err(nom_err)?;
+        let (rest, ciphertext) = nom::bytes::complete::take(size as usize)(rest).map_err(nom_err)?;
+        let (_, tag_slice) = nom::bytes::complete::take(16usize)(rest).map_err(nom_err)?;
+        let tag: [u8; 16] = tag_slice
+            .try_into()
+            // Safety: take(16) guarantees exactly 16 bytes
+            .expect("tag to be 16 bytes");
+        Ok(Self {
+            _size: size,
+            _ciphertext: ciphertext,
+            _tag: tag,
+        })
+    }
 }
 
 /// Decrypted result data.
 ///
 /// This is the decrypted content of [L3ResultPacket]s `ciphertext` field.
-#[derive(Debug, Nom)]
-#[nom(Exact)]
+#[derive(Debug)]
 struct L3ResultData<'a> {
     result: L3ResultStatus,
-    #[nom(Take = "i.len()")]
     data: &'a [u8],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Nom, derive_more::Display, derive_more::Error)]
+impl<'a> FromBytes<'a> for L3ResultData<'a> {
+    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+        let (rest, b) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        let result = L3ResultStatus::from_u8(b)?;
+        Ok(Self { result, data: rest })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 #[repr(u8)]
 enum L3ResultStatus {
     Ok = 0xc3,
@@ -141,8 +180,21 @@ enum L3ResultStatus {
     InvalidKey = 0x12,
 }
 
+impl L3ResultStatus {
+    const fn from_u8(b: u8) -> Result<Self, ParsingError> {
+        match b {
+            0xc3 => Ok(Self::Ok),
+            0x3c => Ok(Self::Fail),
+            0x01 => Ok(Self::Unauthorized),
+            0x02 => Ok(Self::InvalidCmd),
+            0x12 => Ok(Self::InvalidKey),
+            _ => Err(ParsingError::Error(nom::error::ErrorKind::MapOpt)),
+        }
+    }
+}
+
 /// Represents all kinds of origins the chip supports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Nom)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum EccOrigin {
     /// Key originated from the [Tropic01::ecc_key_generate] method.
@@ -151,14 +203,39 @@ pub enum EccOrigin {
     KeyStore = 0x02,
 }
 
-#[derive(Debug, Clone, Nom)]
+impl EccOrigin {
+    const fn from_u8(b: u8) -> Result<Self, ParsingError> {
+        match b {
+            0x01 => Ok(Self::KeyGenerate),
+            0x02 => Ok(Self::KeyStore),
+            _ => Err(ParsingError::Error(nom::error::ErrorKind::MapOpt)),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct EccKeyReadResponse<'a> {
     curve: EccCurve,
     origin: EccOrigin,
     /// The public key. For P-256 curves, this is the uncompressed x + y
     /// coordinates.
-    #[nom(Take = "curve.key_len()", SkipBefore(13))]
     pub_key: &'a [u8],
+}
+
+impl<'a> FromBytes<'a> for EccKeyReadResponse<'a> {
+    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+        let (rest, curve_byte) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        let curve = EccCurve::from_u8(curve_byte)?;
+        let (rest, origin_byte) = nom::number::complete::be_u8(rest).map_err(nom_err)?;
+        let origin = EccOrigin::from_u8(origin_byte)?;
+        let (rest, _) = nom::bytes::complete::take(13usize)(rest).map_err(nom_err)?;
+        let (_, pub_key) = nom::bytes::complete::take(curve.key_len())(rest).map_err(nom_err)?;
+        Ok(Self {
+            curve,
+            origin,
+            pub_key,
+        })
+    }
 }
 
 impl<'a> EccKeyReadResponse<'a> {
@@ -178,10 +255,17 @@ impl<'a> EccKeyReadResponse<'a> {
     }
 }
 
-#[derive(Debug, Clone, Nom)]
+#[derive(Debug, Clone)]
 struct SignResponse<'a> {
-    #[nom(SkipBefore(15), Take(64))]
     signature: &'a [u8],
+}
+
+impl<'a> FromBytes<'a> for SignResponse<'a> {
+    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+        let (rest, _) = nom::bytes::complete::take(15usize)(slice).map_err(nom_err)?;
+        let (_, signature) = nom::bytes::complete::take(64usize)(rest).map_err(nom_err)?;
+        Ok(Self { signature })
+    }
 }
 
 impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
