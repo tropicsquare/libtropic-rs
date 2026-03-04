@@ -16,7 +16,9 @@ use crate::Aes256GcmKey;
 use crate::FromBytes;
 use crate::L2_CHUNK_MAX_DATA_SIZE;
 use crate::ParsingError;
-use crate::nom_err;
+use crate::take;
+use crate::take_be_u16;
+use crate::take_u8;
 use crate::L2_CMD_REQ_LEN;
 use crate::L3_CMD_DATA_SIZE_MAX;
 use crate::L3_CMD_SIZE_SIZE;
@@ -102,14 +104,14 @@ impl ResponseStatus {
             0x7e => Ok(Self::UnknownReq),
             0x7f => Ok(Self::GenErr),
             0xff => Ok(Self::NoResp),
-            _ => Err(ParsingError::Error(nom::error::ErrorKind::MapOpt)),
+            _ => Err(ParsingError::InvalidData),
         }
     }
 }
 
 impl<'a> FromBytes<'a> for ResponseStatus {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (_, b) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        let (_, b) = take_u8(slice)?;
         Self::from_u8(b)
     }
 }
@@ -153,12 +155,12 @@ struct L2ResponseFrame<'a> {
 
 impl<'a> FromBytes<'a> for L2ResponseFrame<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (rest, chip_status) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
-        let (rest, status_byte) = nom::number::complete::be_u8(rest).map_err(nom_err)?;
+        let (rest, chip_status) = take_u8(slice)?;
+        let (rest, status_byte) = take_u8(rest)?;
         let resp_status = ResponseStatus::from_u8(status_byte)?;
-        let (rest, len) = nom::number::complete::be_u8(rest).map_err(nom_err)?;
-        let (rest, resp_data) = nom::bytes::complete::take(len as usize)(rest).map_err(nom_err)?;
-        let (_, crc) = nom::number::complete::be_u16(rest).map_err(nom_err)?;
+        let (rest, len) = take_u8(rest)?;
+        let (rest, resp_data) = take(rest, len as usize)?;
+        let (_, crc) = take_be_u16(rest)?;
         Ok(Self {
             _chip_status: chip_status,
             resp_status,
@@ -259,8 +261,8 @@ struct HandShakeResponse<'a> {
 
 impl<'a> FromBytes<'a> for HandShakeResponse<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (rest, etpub) = nom::bytes::complete::take(32usize)(slice).map_err(nom_err)?;
-        let (_, ttauth) = nom::bytes::complete::take(16usize)(rest).map_err(nom_err)?;
+        let (rest, etpub) = take(slice, 32)?;
+        let (_, ttauth) = take(rest, 16)?;
         Ok(Self { etpub, ttauth })
     }
 }
