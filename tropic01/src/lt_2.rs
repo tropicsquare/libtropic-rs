@@ -5,7 +5,6 @@ use embedded_hal::digital::ErrorType as GpioErrorType;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::ErrorType as SpiErrorType;
 use embedded_hal::spi::SpiDevice;
-use nom_derive::Nom;
 use zerocopy::BE;
 use zerocopy::IntoBytes;
 use zerocopy::U16;
@@ -16,6 +15,8 @@ use super::Tropic01;
 use crate::Aes256GcmKey;
 use crate::FromBytes;
 use crate::L2_CHUNK_MAX_DATA_SIZE;
+use crate::ParsingError;
+use crate::nom_err;
 use crate::L2_CMD_REQ_LEN;
 use crate::L3_CMD_DATA_SIZE_MAX;
 use crate::L3_CMD_SIZE_SIZE;
@@ -53,7 +54,7 @@ enum L2RequestId {
 }
 
 /// Represents all possible response status codes the chip may return.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Nom, derive_more::Display, derive_more::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 #[repr(u8)]
 pub enum ResponseStatus {
     ReqOk = 0x01,
@@ -85,6 +86,33 @@ pub enum ResponseStatus {
     #[display("No L2 response frame available")]
     NoResp = 0xff,
 }
+
+impl ResponseStatus {
+    const fn from_u8(b: u8) -> Result<Self, ParsingError> {
+        match b {
+            0x01 => Ok(Self::ReqOk),
+            0x02 => Ok(Self::ResOk),
+            0x03 => Ok(Self::ReqCont),
+            0x04 => Ok(Self::ResCont),
+            0x78 => Ok(Self::RespDisabled),
+            0x79 => Ok(Self::HskErr),
+            0x7a => Ok(Self::NoSession),
+            0x7b => Ok(Self::TagErr),
+            0x7c => Ok(Self::CrcErr),
+            0x7e => Ok(Self::UnknownReq),
+            0x7f => Ok(Self::GenErr),
+            0xff => Ok(Self::NoResp),
+            _ => Err(ParsingError::Error(nom::error::ErrorKind::MapOpt)),
+        }
+    }
+}
+
+impl<'a> FromBytes<'a> for ResponseStatus {
+    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+        let (_, b) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        Self::from_u8(b)
+    }
+}
 #[derive(Clone, Debug, IntoBytes, Unaligned)]
 #[repr(C)]
 pub(super) struct L2RequestFrame<'a> {
@@ -114,15 +142,31 @@ impl<'a> L2RequestFrame<'a> {
     }
 }
 
-#[derive(Debug, Nom)]
+#[derive(Debug)]
 struct L2ResponseFrame<'a> {
     _chip_status: u8,
     resp_status: ResponseStatus,
     len: u8,
-    #[nom(Take = "len")]
     resp_data: &'a [u8],
-    #[nom(BigEndian)]
     crc: u16,
+}
+
+impl<'a> FromBytes<'a> for L2ResponseFrame<'a> {
+    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+        let (rest, chip_status) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        let (rest, status_byte) = nom::number::complete::be_u8(rest).map_err(nom_err)?;
+        let resp_status = ResponseStatus::from_u8(status_byte)?;
+        let (rest, len) = nom::number::complete::be_u8(rest).map_err(nom_err)?;
+        let (rest, resp_data) = nom::bytes::complete::take(len as usize)(rest).map_err(nom_err)?;
+        let (_, crc) = nom::number::complete::be_u16(rest).map_err(nom_err)?;
+        Ok(Self {
+            _chip_status: chip_status,
+            resp_status,
+            len,
+            resp_data,
+            crc,
+        })
+    }
 }
 
 impl<'a> L2ResponseFrame<'a> {
@@ -207,12 +251,18 @@ pub enum SleepReq {
     DeepSleep = 0x0a,
 }
 
-#[derive(Debug, Nom)]
+#[derive(Debug)]
 struct HandShakeResponse<'a> {
-    #[nom(Take = "32")]
     etpub: &'a [u8],
-    #[nom(Take = "16")]
     ttauth: &'a [u8],
+}
+
+impl<'a> FromBytes<'a> for HandShakeResponse<'a> {
+    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+        let (rest, etpub) = nom::bytes::complete::take(32usize)(slice).map_err(nom_err)?;
+        let (_, ttauth) = nom::bytes::complete::take(16usize)(rest).map_err(nom_err)?;
+        Ok(Self { etpub, ttauth })
+    }
 }
 
 impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {

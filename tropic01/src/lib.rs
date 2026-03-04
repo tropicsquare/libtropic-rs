@@ -8,7 +8,6 @@ use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::ErrorType as SpiErrorType;
 use embedded_hal::spi::SpiDevice;
 use nom::Needed;
-use nom_derive::Parse;
 use packed_struct::PackingError;
 use packed_struct::derive::PackedStruct;
 use zerocopy::IntoBytes;
@@ -143,7 +142,7 @@ impl From<nom::Err<ParsingError>> for ParsingError {
     }
 }
 
-/// Convenience trait to auto-implement nom parsing for all T that derive `Nom`.
+/// Trait for parsing types from byte slices using nom parsers.
 trait FromBytes<'a>
 where
     Self: Sized,
@@ -151,10 +150,12 @@ where
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError>;
 }
 
-impl<'a, T: Parse<&'a [u8]>> FromBytes<'a> for T {
-    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (_, res) = T::parse(slice).map_err(|e| e.map(|e| ParsingError::Error(e.code)))?;
-        Ok(res)
+/// Convert a nom error into a [ParsingError].
+pub(crate) const fn nom_err(e: nom::Err<nom::error::Error<&[u8]>>) -> ParsingError {
+    match e {
+        nom::Err::Error(e) => ParsingError::Error(e.code),
+        nom::Err::Incomplete(n) => ParsingError::Needed(n),
+        nom::Err::Failure(e) => ParsingError::Error(e.code),
     }
 }
 
