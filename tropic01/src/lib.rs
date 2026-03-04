@@ -320,7 +320,8 @@ impl AsRef<[u8]> for Nonce {
 
 #[derive(Zeroize)]
 struct Session {
-    iv: Nonce,
+    encryption_iv: Nonce,
+    decryption_iv: Nonce,
     encrypt: Aes256GcmKey,
     decrypt: Aes256GcmKey,
 }
@@ -328,7 +329,8 @@ struct Session {
 impl Session {
     fn new(encrypt: Aes256GcmKey, decrypt: Aes256GcmKey) -> Self {
         Self {
-            iv: Nonce::default(),
+            encryption_iv: Nonce::default(),
+            decryption_iv: Nonce::default(),
             encrypt,
             decrypt,
         }

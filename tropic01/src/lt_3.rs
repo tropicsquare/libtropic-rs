@@ -303,8 +303,15 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let size = U16::try_from(len)
         // Safety: Expect is safe here since l3_buf capacity (L3_FRAME_MAX_SIZE) < U16::MAX.
         .expect("cmd len to be in u16 range");
-        let tag = aesgcm_encrypt(&session.encrypt, &session.iv, b"", &mut self.l3_buf)
-            .map_err(Error::Encryption)?;
+        let tag = aesgcm_encrypt(
+            &session.encrypt,
+            &session.encryption_iv,
+            b"",
+            &mut self.l3_buf,
+        )
+        .map_err(Error::Encryption)?;
+
+        session.encryption_iv.wrapping_inc();
 
         let cmd = EncryptedL3CommandPacket {
             cmd_size: size,
@@ -330,10 +337,10 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let l3_buf_len = self.l3_buf.len();
         let (l3_buf, tag) = self.l3_buf.split_at_mut(l3_buf_len - L3_TAG_SIZE);
 
-        aesgcm_decrypt(&session.decrypt, &session.iv, b"", tag, l3_buf)
+        aesgcm_decrypt(&session.decrypt, &session.decryption_iv, b"", tag, l3_buf)
             .map_err(Error::Decryption)?;
 
-        session.iv.wrapping_inc();
+        session.decryption_iv.wrapping_inc();
 
         let res = L3ResultData::from_bytes(l3_buf)?;
 
