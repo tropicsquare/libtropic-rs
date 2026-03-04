@@ -65,13 +65,19 @@ const L3_PACKET_MAX_SIZE: usize = L3_CMD_ID_SIZE + L3_CMD_DATA_SIZE_MAX;
 /// Max size of an L3 frame
 const L3_FRAME_MAX_SIZE: usize = L3_RES_SIZE_SIZE + L3_PACKET_MAX_SIZE + L3_TAG_SIZE;
 
+/// Zero-sized type representing no active session.
+pub struct NoSession;
+
+/// Type representing an active secure session with the chip.
+pub struct ActiveSession(Session);
+
 /// Tropic01 driver
-pub struct Tropic01<SPI, CS> {
+pub struct Tropic01<SPI, CS, S = NoSession> {
     spi: SPI,
     l2_buf: [u8; L2_MAX_FRAME_SIZE + 1],
     l3_buf: ArrayVec<u8, L3_FRAME_MAX_SIZE>,
     cs: Option<CS>,
-    session: Option<Session>,
+    state: S,
 }
 
 impl<SPI: SpiDevice> Tropic01<SPI, DummyPin> {
@@ -89,19 +95,20 @@ impl<SPI: SpiDevice> Tropic01<SPI, DummyPin> {
             l2_buf: [0; L2_MAX_FRAME_SIZE + 1],
             l3_buf: ArrayVec::new(),
             cs: None,
-            session: None,
+            state: NoSession,
         }
     }
 }
 
-impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
+impl<SPI: SpiDevice, CS: OutputPin, S> Tropic01<SPI, CS, S> {
     /// Configure the driver to manage the chip-select pin. This is optional,
     /// use this if the [SpiDevice] does not handle the CS pin.
+    #[expect(clippy::type_complexity)]
     pub fn with_cs_pin<CS2: OutputPin>(
         self,
         mut cs: CS2,
     ) -> Result<
-        Tropic01<SPI, CS2>,
+        Tropic01<SPI, CS2, S>,
         Error<<SPI as SpiErrorType>::Error, <CS2 as GpioErrorType>::Error>,
     > {
         cs.set_high().map_err(Error::GPIOError)?;
@@ -110,7 +117,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
             l2_buf: self.l2_buf,
             l3_buf: self.l3_buf,
             cs: Some(cs),
-            session: self.session,
+            state: self.state,
         })
     }
 }
@@ -227,8 +234,6 @@ pub enum Error<ESpi, EGpio> {
     L3CmdFailed,
     #[display("L3 response buffer overflow")]
     L3ResponseBufferOverflow,
-    #[display("No secure session established")]
-    NoSession,
     #[display("Parsing L3 response failed: {_0}")]
     ParsingError(ParsingError),
     #[display("Request exceeded allowed max size")]
@@ -259,7 +264,7 @@ impl<ESpi, EGpio> From<ParsingError> for Error<ESpi, EGpio> {
     }
 }
 
-impl<SPI: SpiErrorType, CS: GpioErrorType> SpiErrorType for Tropic01<SPI, CS>
+impl<SPI: SpiErrorType, CS: GpioErrorType, S> SpiErrorType for Tropic01<SPI, CS, S>
 where
     Error<
         <SPI as embedded_hal::spi::ErrorType>::Error,
@@ -270,7 +275,7 @@ where
         Error<<SPI as SpiErrorType>::Error, <CS as embedded_hal::digital::ErrorType>::Error>;
 }
 
-impl<SPI: SpiErrorType, CS: GpioErrorType> GpioErrorType for Tropic01<SPI, CS>
+impl<SPI: SpiErrorType, CS: GpioErrorType, S> GpioErrorType for Tropic01<SPI, CS, S>
 where
     Error<
         <SPI as embedded_hal::spi::ErrorType>::Error,

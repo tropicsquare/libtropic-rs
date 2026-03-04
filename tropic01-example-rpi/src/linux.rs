@@ -57,25 +57,27 @@ pub async fn run() -> Result<(), anyhow::Error> {
     let ehpub = PublicKey::from(&ehpriv);
     let shpub = SH0PUB_PROD0.into();
     let shpriv = SH0PRIV_PROD0.into();
-    tropic01.session_start(&X25519Dalek, shpub, shpriv, ehpub, ehpriv, 0)?;
+    let mut session = tropic01
+        .session_start(&X25519Dalek, shpub, shpriv, ehpub, ehpriv, 0)
+        .map_err(|(_, e)| e)?;
 
-    let res = tropic01.get_random_value(6)?;
+    let res = session.get_random_value(6)?;
     println!("random value get: {res:x?}");
 
     let ping_data = b"";
-    let res = tropic01.ping(ping_data)?;
+    let res = session.ping(ping_data)?;
     // Test empty data loopback
     assert_eq!(res, ping_data);
 
     let ping_data = [6; 4096];
-    let res = tropic01.ping(&ping_data)?;
+    let res = session.ping(&ping_data)?;
     // Test long data loopback
     assert_eq!(res, ping_data);
 
     let key_slot = 0.into();
-    tropic01.ecc_key_generate(key_slot, EccCurve::P256)?;
+    session.ecc_key_generate(key_slot, EccCurve::P256)?;
 
-    let res = tropic01.ecc_key_read(key_slot)?;
+    let res = session.ecc_key_read(key_slot)?;
     println!("key read response: {res:x?}");
 
     let public_key =
@@ -86,7 +88,7 @@ pub async fn run() -> Result<(), anyhow::Error> {
     let mut hasher = sha2::Sha256::new();
     hasher.update(msg);
     let hash: [u8; 32] = hasher.finalize().into();
-    let signature = tropic01.eddsa_sign(key_slot, &hash)?;
+    let signature = session.eddsa_sign(key_slot, &hash)?;
     println!("signature of hash: {signature:x?}");
     public_key
         .verify_strict(&hash, &Signature::from_bytes(signature))
@@ -95,7 +97,7 @@ pub async fn run() -> Result<(), anyhow::Error> {
     // Produce an unauthorized error to test nonce behavior
     if shpub.as_bytes() == &SH0PUB_PROD0 {
         assert!(matches!(
-            tropic01.ecc_key_generate(3.into(), EccCurve::P256),
+            session.ecc_key_generate(3.into(), EccCurve::P256),
             Err(Error::Unauthorized)
         ));
     }
@@ -103,7 +105,7 @@ pub async fn run() -> Result<(), anyhow::Error> {
     // Signature of raw message
     let msg = "hello tropic".repeat(341);
     let msg = msg.as_bytes();
-    let signature = tropic01.eddsa_sign(key_slot, msg)?;
+    let signature = session.eddsa_sign(key_slot, msg)?;
     println!("signature of long raw msg: {signature:x?}");
     public_key
         .verify_strict(msg, &Signature::from_bytes(signature))

@@ -10,7 +10,9 @@ use zerocopy::IntoBytes;
 use zerocopy::U16;
 use zerocopy::Unaligned;
 
+use super::ActiveSession;
 use super::Error;
+use super::NoSession;
 use super::Tropic01;
 use crate::Aes256GcmKey;
 use crate::FromBytes;
@@ -266,7 +268,7 @@ impl<'a> FromBytes<'a> for HandShakeResponse<'a> {
     }
 }
 
-impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
+impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, NoSession> {
     fn get_info_req(
         &mut self,
         req: InfoReq,
@@ -378,43 +380,46 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         Ok(())
     }
 
-    /// Abort the current secure session.
-    ///
-    /// Invalidates host session data and sends a session abort frame to the
-    /// chip.
-    pub fn session_abort(
-        &mut self,
-    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
-        self.session = None;
-        let data = [];
-        let frame = L2RequestFrame::new(L2RequestId::EncryptedSessionAbt as u8, &data[..]);
-        let res = l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs)?;
-        if res.len != 0 {
-            return Err(Error::InvalidResponse);
-        }
-        Ok(())
-    }
-
     /// Start a secure session
+    ///
+    /// Consumes `self` in the `NoSession` state and returns a `Tropic01` in the
+    /// `ActiveSession` state on success. On failure, returns `(self, error)` so
+    /// the caller retains ownership.
     ///
     /// Arguments:
     /// - shipub: Secret host public key corresponding to slot `pkey_index`
     /// - shipriv: Secret host private key corresponding to slot `pkey_index`
     /// - ehpub: Ephemeral public key
     /// - ehpriv: Ephemeral private key
+    #[expect(clippy::type_complexity, clippy::result_large_err)]
     pub fn session_start<X: X25519>(
-        &mut self,
+        mut self,
         x25519: &X,
         shipub: X::PublicKey,
         shipriv: X::StaticSecret,
         ehpub: X::PublicKey,
         ehpriv: X::StaticSecret,
         pkey_index: u8,
-    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
-        let cert = self.get_info_cert_store()?;
-        let stpub = *cert.public_key().map_err(|_| Error::InvalidPublicKey)?;
+    ) -> Result<
+        Tropic01<SPI, CS, ActiveSession>,
+        (
+            Self,
+            Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>,
+        ),
+    > {
+        let cert = match self.get_info_cert_store() {
+            Ok(c) => c,
+            Err(e) => return Err((self, e)),
+        };
+        let stpub = match cert.public_key() {
+            Ok(k) => *k,
+            Err(_) => return Err((self, Error::InvalidPublicKey)),
+        };
 
-        let hdshk = self.handshake_req::<X>(ehpub, pkey_index)?;
+        let hdshk = match self.handshake_req::<X>(ehpub, pkey_index) {
+            Ok(h) => h,
+            Err(e) => return Err((self, e)),
+        };
         let etpub: [u8; 32] = hdshk
             .etpub
             .try_into()
@@ -426,7 +431,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
             // Safety: This is safe since the field is verified in HandShakeResponse
             .expect("response to contain authentication tag (16 bytes)");
 
-        let (kcmd, kres) = process_handshake(
+        let (kcmd, kres) = match process_handshake(
             x25519,
             etpub.into(),
             ehpub,
@@ -436,12 +441,18 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
             stpub.into(),
             ttauth,
             pkey_index,
-        )
-        .map_err(|_| Error::HandshakeFailed)?;
+        ) {
+            Ok(keys) => keys,
+            Err(_) => return Err((self, Error::HandshakeFailed)),
+        };
 
-        self.session = Some(super::Session::new(kcmd, kres));
-
-        Ok(())
+        Ok(Tropic01 {
+            spi: self.spi,
+            l2_buf: self.l2_buf,
+            l3_buf: self.l3_buf,
+            cs: self.cs,
+            state: ActiveSession(super::Session::new(kcmd, kres)),
+        })
     }
 
     fn handshake_req<X: X25519>(
@@ -457,6 +468,41 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
         let res = l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs)?;
 
         Ok(HandShakeResponse::from_bytes(res.resp_data)?)
+    }
+}
+
+impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
+    /// Abort the current secure session.
+    ///
+    /// Consumes `self` in the `ActiveSession` state and returns a `Tropic01` in
+    /// the `NoSession` state on success. On failure, returns `(self, error)` so
+    /// the caller retains ownership.
+    #[expect(clippy::type_complexity, clippy::result_large_err)]
+    pub fn session_abort(
+        mut self,
+    ) -> Result<
+        Tropic01<SPI, CS, NoSession>,
+        (
+            Self,
+            Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>,
+        ),
+    > {
+        let data = [];
+        let frame = L2RequestFrame::new(L2RequestId::EncryptedSessionAbt as u8, &data[..]);
+        let res = match l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs) {
+            Ok(r) => r,
+            Err(e) => return Err((self, e)),
+        };
+        if res.len != 0 {
+            return Err((self, Error::InvalidResponse));
+        }
+        Ok(Tropic01 {
+            spi: self.spi,
+            l2_buf: self.l2_buf,
+            l3_buf: self.l3_buf,
+            cs: self.cs,
+            state: NoSession,
+        })
     }
 }
 
@@ -503,7 +549,7 @@ fn l2_transfer_helper<'a, SPI: SpiDevice, CS: OutputPin>(
         }
 
         match res.resp_status {
-            ResponseStatus::NoSession => return Err(Error::NoSession),
+            ResponseStatus::NoSession => return Err(Error::InvalidL2Response),
             ResponseStatus::GenErr => {
                 // Retry but ask chip to resend the last response frame.
                 req.replace(L2RequestFrame::new(L2RequestId::ResendReq as u8, &[]));

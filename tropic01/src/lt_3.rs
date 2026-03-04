@@ -5,6 +5,7 @@ use embedded_hal::spi::SpiDevice;
 use zerocopy::IntoBytes;
 use zerocopy::little_endian::U16;
 
+use crate::ActiveSession;
 use crate::Error;
 use crate::FromBytes;
 use crate::L3_CMD_DATA_SIZE_MAX;
@@ -278,13 +279,13 @@ impl<'a> FromBytes<'a> for SignResponse<'a> {
     }
 }
 
-impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS> {
+impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
     fn lt_l3_transfer(
         &mut self,
         packet: DecryptedL3CommandPacket<'_>,
     ) -> Result<L3ResultData<'_>, Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>>
     {
-        let session = self.session.as_mut().ok_or_else(|| Error::NoSession)?;
+        let session = &mut self.state.0;
         self.l3_buf.clear();
 
         self.l3_buf
