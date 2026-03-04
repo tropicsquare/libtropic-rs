@@ -7,18 +7,18 @@ use zerocopy::little_endian::U16;
 
 use crate::Error;
 use crate::FromBytes;
-use crate::ParsingError;
-use crate::take;
-use crate::take_le_u16;
-use crate::take_u8;
 use crate::L3_CMD_DATA_SIZE_MAX;
 use crate::L3_RES_SIZE_SIZE;
 use crate::L3_TAG_SIZE;
+use crate::ParsingError;
 use crate::Tropic01;
 use crate::crypto::aesgcm_decrypt;
 use crate::crypto::aesgcm_encrypt;
 use crate::lt_2::l2_receive_encrypted_cmd;
 use crate::lt_2::l2_send_encrypted_cmd;
+use crate::take;
+use crate::take_le_u16;
+use crate::take_u8;
 
 #[derive(Clone, Debug)]
 struct DecryptedL3CommandPacket<'a> {

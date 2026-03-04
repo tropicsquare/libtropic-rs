@@ -15,10 +15,6 @@ use super::Tropic01;
 use crate::Aes256GcmKey;
 use crate::FromBytes;
 use crate::L2_CHUNK_MAX_DATA_SIZE;
-use crate::ParsingError;
-use crate::take;
-use crate::take_be_u16;
-use crate::take_u8;
 use crate::L2_CMD_REQ_LEN;
 use crate::L3_CMD_DATA_SIZE_MAX;
 use crate::L3_CMD_SIZE_SIZE;
@@ -26,6 +22,7 @@ use crate::L3_FRAME_MAX_SIZE;
 use crate::L3_RES_SIZE_SIZE;
 use crate::L3_TAG_SIZE;
 use crate::Nonce;
+use crate::ParsingError;
 use crate::crc16::Crc16;
 use crate::crypto::CryptoError;
 use crate::crypto::X25519;
@@ -37,6 +34,9 @@ use crate::lt_1::l1_read;
 use crate::lt_1::l1_write;
 use crate::lt_3::EncryptedL3CommandPacket;
 use crate::lt_3::L3ResultPacket;
+use crate::take;
+use crate::take_be_u16;
+use crate::take_u8;
 
 const L2_GET_INFO_REQ_CERT_SIZE: usize = 512;
 /// Protocol Name
