@@ -7,7 +7,6 @@ use embedded_hal::digital::ErrorType as GpioErrorType;
 use embedded_hal::digital::OutputPin;
 use embedded_hal::spi::ErrorType as SpiErrorType;
 use embedded_hal::spi::SpiDevice;
-use nom::Needed;
 use packed_struct::PackingError;
 use packed_struct::derive::PackedStruct;
 use zerocopy::IntoBytes;
@@ -126,23 +125,13 @@ struct ChipStatus {
 /// Represents all kinds of parsing errors.
 #[derive(Debug, derive_more::Display, derive_more::Error)]
 pub enum ParsingError {
-    #[display("Parsing failed: {_0:?}")]
-    Error(#[error(not(source))] nom::error::ErrorKind),
-    #[display("Parsing failed, needs more bytes: {_0:?}")]
-    Needed(#[error(not(source))] Needed),
+    #[display("Parsing failed: not enough bytes")]
+    InsufficientData,
+    #[display("Parsing failed: invalid data")]
+    InvalidData,
 }
 
-impl From<nom::Err<ParsingError>> for ParsingError {
-    fn from(other: nom::Err<ParsingError>) -> Self {
-        match other {
-            nom::Err::Error(e) => e,
-            nom::Err::Incomplete(e) => ParsingError::Needed(e),
-            nom::Err::Failure(e) => e,
-        }
-    }
-}
-
-/// Trait for parsing types from byte slices using nom parsers.
+/// Trait for parsing types from byte slices.
 trait FromBytes<'a>
 where
     Self: Sized,
@@ -150,13 +139,39 @@ where
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError>;
 }
 
-/// Convert a nom error into a [ParsingError].
-pub(crate) const fn nom_err(e: nom::Err<nom::error::Error<&[u8]>>) -> ParsingError {
-    match e {
-        nom::Err::Error(e) => ParsingError::Error(e.code),
-        nom::Err::Incomplete(n) => ParsingError::Needed(n),
-        nom::Err::Failure(e) => ParsingError::Error(e.code),
+/// Read a single byte from the front of the slice.
+pub(crate) const fn take_u8(slice: &[u8]) -> Result<(&[u8], u8), ParsingError> {
+    match slice.split_first() {
+        Some((&b, rest)) => Ok((rest, b)),
+        None => Err(ParsingError::InsufficientData),
     }
+}
+
+/// Read a little-endian u16 from the front of the slice.
+pub(crate) const fn take_le_u16(slice: &[u8]) -> Result<(&[u8], u16), ParsingError> {
+    if slice.len() < 2 {
+        return Err(ParsingError::InsufficientData);
+    }
+    let (bytes, rest) = slice.split_at(2);
+    Ok((rest, u16::from_le_bytes([bytes[0], bytes[1]])))
+}
+
+/// Read a big-endian u16 from the front of the slice.
+pub(crate) const fn take_be_u16(slice: &[u8]) -> Result<(&[u8], u16), ParsingError> {
+    if slice.len() < 2 {
+        return Err(ParsingError::InsufficientData);
+    }
+    let (bytes, rest) = slice.split_at(2);
+    Ok((rest, u16::from_be_bytes([bytes[0], bytes[1]])))
+}
+
+/// Take `n` bytes from the front of the slice.
+pub(crate) const fn take(slice: &[u8], n: usize) -> Result<(&[u8], &[u8]), ParsingError> {
+    if slice.len() < n {
+        return Err(ParsingError::InsufficientData);
+    }
+    let (taken, rest) = slice.split_at(n);
+    Ok((rest, taken))
 }
 
 /// Any type of error which may occur while interacting with the device

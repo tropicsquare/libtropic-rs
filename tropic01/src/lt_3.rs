@@ -8,7 +8,9 @@ use zerocopy::little_endian::U16;
 use crate::Error;
 use crate::FromBytes;
 use crate::ParsingError;
-use crate::nom_err;
+use crate::take;
+use crate::take_le_u16;
+use crate::take_u8;
 use crate::L3_CMD_DATA_SIZE_MAX;
 use crate::L3_RES_SIZE_SIZE;
 use crate::L3_TAG_SIZE;
@@ -83,14 +85,14 @@ impl EccCurve {
         match b {
             0x01 => Ok(Self::P256),
             0x02 => Ok(Self::Ed25519),
-            _ => Err(ParsingError::Error(nom::error::ErrorKind::MapOpt)),
+            _ => Err(ParsingError::InvalidData),
         }
     }
 }
 
 impl<'a> FromBytes<'a> for EccCurve {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (_, b) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        let (_, b) = take_u8(slice)?;
         Self::from_u8(b)
     }
 }
@@ -138,9 +140,9 @@ pub(super) struct L3ResultPacket<'a> {
 
 impl<'a> FromBytes<'a> for L3ResultPacket<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (rest, size) = nom::number::complete::le_u16(slice).map_err(nom_err)?;
-        let (rest, ciphertext) = nom::bytes::complete::take(size as usize)(rest).map_err(nom_err)?;
-        let (_, tag_slice) = nom::bytes::complete::take(16usize)(rest).map_err(nom_err)?;
+        let (rest, size) = take_le_u16(slice)?;
+        let (rest, ciphertext) = take(rest, size as usize)?;
+        let (_, tag_slice) = take(rest, 16)?;
         let tag: [u8; 16] = tag_slice
             .try_into()
             // Safety: take(16) guarantees exactly 16 bytes
@@ -164,7 +166,7 @@ struct L3ResultData<'a> {
 
 impl<'a> FromBytes<'a> for L3ResultData<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (rest, b) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        let (rest, b) = take_u8(slice)?;
         let result = L3ResultStatus::from_u8(b)?;
         Ok(Self { result, data: rest })
     }
@@ -188,7 +190,7 @@ impl L3ResultStatus {
             0x01 => Ok(Self::Unauthorized),
             0x02 => Ok(Self::InvalidCmd),
             0x12 => Ok(Self::InvalidKey),
-            _ => Err(ParsingError::Error(nom::error::ErrorKind::MapOpt)),
+            _ => Err(ParsingError::InvalidData),
         }
     }
 }
@@ -208,7 +210,7 @@ impl EccOrigin {
         match b {
             0x01 => Ok(Self::KeyGenerate),
             0x02 => Ok(Self::KeyStore),
-            _ => Err(ParsingError::Error(nom::error::ErrorKind::MapOpt)),
+            _ => Err(ParsingError::InvalidData),
         }
     }
 }
@@ -224,12 +226,12 @@ pub struct EccKeyReadResponse<'a> {
 
 impl<'a> FromBytes<'a> for EccKeyReadResponse<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (rest, curve_byte) = nom::number::complete::be_u8(slice).map_err(nom_err)?;
+        let (rest, curve_byte) = take_u8(slice)?;
         let curve = EccCurve::from_u8(curve_byte)?;
-        let (rest, origin_byte) = nom::number::complete::be_u8(rest).map_err(nom_err)?;
+        let (rest, origin_byte) = take_u8(rest)?;
         let origin = EccOrigin::from_u8(origin_byte)?;
-        let (rest, _) = nom::bytes::complete::take(13usize)(rest).map_err(nom_err)?;
-        let (_, pub_key) = nom::bytes::complete::take(curve.key_len())(rest).map_err(nom_err)?;
+        let (rest, _) = take(rest, 13)?;
+        let (_, pub_key) = take(rest, curve.key_len())?;
         Ok(Self {
             curve,
             origin,
@@ -262,8 +264,8 @@ struct SignResponse<'a> {
 
 impl<'a> FromBytes<'a> for SignResponse<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
-        let (rest, _) = nom::bytes::complete::take(15usize)(slice).map_err(nom_err)?;
-        let (_, signature) = nom::bytes::complete::take(64usize)(rest).map_err(nom_err)?;
+        let (rest, _) = take(slice, 15)?;
+        let (_, signature) = take(rest, 64)?;
         Ok(Self { signature })
     }
 }
