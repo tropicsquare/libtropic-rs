@@ -73,27 +73,18 @@ enum L3CmdId {
 }
 
 /// Represents all kinds of curves the chip supports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
 #[repr(u8)]
+#[try_from(repr)]
 pub enum EccCurve {
     P256 = 0x01,
     Ed25519 = 0x02,
 }
 
-impl EccCurve {
-    const fn from_u8(b: u8) -> Result<Self, ParsingError> {
-        match b {
-            0x01 => Ok(Self::P256),
-            0x02 => Ok(Self::Ed25519),
-            _ => Err(ParsingError::InvalidData),
-        }
-    }
-}
-
 impl<'a> FromBytes<'a> for EccCurve {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
         let (_, b) = take_u8(slice)?;
-        Self::from_u8(b)
+        Ok(Self::try_from(b)?)
     }
 }
 
@@ -167,13 +158,23 @@ struct L3ResultData<'a> {
 impl<'a> FromBytes<'a> for L3ResultData<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
         let (rest, b) = take_u8(slice)?;
-        let result = L3ResultStatus::from_u8(b)?;
+        let result = L3ResultStatus::try_from(b)?;
         Ok(Self { result, data: rest })
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::TryFrom,
+    derive_more::Display,
+    derive_more::Error,
+)]
 #[repr(u8)]
+#[try_from(repr)]
 enum L3ResultStatus {
     Ok = 0xc3,
     Fail = 0x3c,
@@ -182,37 +183,15 @@ enum L3ResultStatus {
     InvalidKey = 0x12,
 }
 
-impl L3ResultStatus {
-    const fn from_u8(b: u8) -> Result<Self, ParsingError> {
-        match b {
-            0xc3 => Ok(Self::Ok),
-            0x3c => Ok(Self::Fail),
-            0x01 => Ok(Self::Unauthorized),
-            0x02 => Ok(Self::InvalidCmd),
-            0x12 => Ok(Self::InvalidKey),
-            _ => Err(ParsingError::InvalidData),
-        }
-    }
-}
-
 /// Represents all kinds of origins the chip supports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::TryFrom)]
 #[repr(u8)]
+#[try_from(repr)]
 pub enum EccOrigin {
     /// Key originated from the [Tropic01::ecc_key_generate] method.
     KeyGenerate = 0x01,
     /// Key originated from the [Tropic01::ecc_key_read] method.
     KeyStore = 0x02,
-}
-
-impl EccOrigin {
-    const fn from_u8(b: u8) -> Result<Self, ParsingError> {
-        match b {
-            0x01 => Ok(Self::KeyGenerate),
-            0x02 => Ok(Self::KeyStore),
-            _ => Err(ParsingError::InvalidData),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -227,9 +206,9 @@ pub struct EccKeyReadResponse<'a> {
 impl<'a> FromBytes<'a> for EccKeyReadResponse<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
         let (rest, curve_byte) = take_u8(slice)?;
-        let curve = EccCurve::from_u8(curve_byte)?;
+        let curve = EccCurve::try_from(curve_byte)?;
         let (rest, origin_byte) = take_u8(rest)?;
-        let origin = EccOrigin::from_u8(origin_byte)?;
+        let origin = EccOrigin::try_from(origin_byte)?;
         let (rest, _) = take(rest, 13)?;
         let (_, pub_key) = take(rest, curve.key_len())?;
         Ok(Self {

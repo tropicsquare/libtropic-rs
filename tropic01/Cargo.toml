@@ -22,6 +22,7 @@ derive_more = { version = "2", default-features = false, features = [
   "display",
   "error",
   "from",
+  "try_from",
 ] }
 dummy-pin = { version = "1.0.0", default-features = false }
 embedded-hal = { version = "1", default-features = false }
