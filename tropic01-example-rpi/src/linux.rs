@@ -9,8 +9,8 @@ use tropic01::EccCurve;
 use tropic01::Error;
 use tropic01::Tropic01;
 use tropic01::X25519Dalek;
-use tropic01::keys::SH0PRIV;
-use tropic01::keys::SH0PUB;
+use tropic01::keys::SH0PRIV_PROD0;
+use tropic01::keys::SH0PUB_PROD0;
 use x25519_dalek::PublicKey;
 use x25519_dalek::StaticSecret;
 
@@ -55,8 +55,8 @@ pub async fn run() -> Result<(), anyhow::Error> {
     let csprng = OsRng;
     let ehpriv = StaticSecret::random_from_rng(csprng);
     let ehpub = PublicKey::from(&ehpriv);
-    let shpub = SH0PUB.into();
-    let shpriv = SH0PRIV.into();
+    let shpub = SH0PUB_PROD0.into();
+    let shpriv = SH0PRIV_PROD0.into();
     tropic01.session_start(&X25519Dalek, shpub, shpriv, ehpub, ehpriv, 0)?;
 
     let res = tropic01.get_random_value(6)?;
@@ -93,7 +93,7 @@ pub async fn run() -> Result<(), anyhow::Error> {
         .expect("signature to be verified");
 
     // Produce an unauthorized error to test nonce behavior
-    if shpub.as_bytes() == &SH0PUB {
+    if shpub.as_bytes() == &SH0PUB_PROD0 {
         assert!(matches!(
             tropic01.ecc_key_generate(3.into(), EccCurve::P256),
             Err(Error::Unauthorized)

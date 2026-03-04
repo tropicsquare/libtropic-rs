@@ -694,8 +694,8 @@ mod test {
     use crate::crypto::aesgcm_decrypt;
     use crate::crypto::hkdf;
     use crate::crypto::sha256_sequence;
-    use crate::keys::SH0PRIV;
-    use crate::keys::SH0PUB;
+    use crate::keys::SH0PRIV_ENG_SAMPLE;
+    use crate::keys::SH0PUB_ENG_SAMPLE;
     use crate::lt_2::L2RequestFrame;
     use crate::lt_2::L2ResponseFrame;
     use crate::lt_2::PROTOCOL_NAME;
@@ -741,8 +741,8 @@ mod test {
             0x6c, 0x43, 0xb1, 0xc9, 0x31, 0x51, 0xde, 0xce, 0x75, 0x5b, 0x79, 0x38, 0xe8, 0xde,
             0x17, 0x7b, 0x61, 0x3c,
         ];
-        let shipriv = StaticSecret::from(SH0PRIV);
-        let shipub = PublicKey::from(SH0PUB);
+        let shipriv = StaticSecret::from(SH0PRIV_ENG_SAMPLE);
+        let shipub = PublicKey::from(SH0PUB_ENG_SAMPLE);
         let stpub: [u8; 32] = [
             0x7c, 0xcc, 0x66, 0x64, 0x90, 0x36, 0xcd, 0x66, 0xa5, 0x52, 0xef, 0x2d, 0x19, 0x7a,
             0xae, 0xf5, 0xc7, 0x4e, 0x70, 0x4f, 0xf7, 0x1b, 0x8d, 0xea, 0x70, 0xb, 0xec, 0x65,
