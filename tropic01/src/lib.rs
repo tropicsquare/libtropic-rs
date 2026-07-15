@@ -18,6 +18,7 @@ pub use crate::crypto::X25519;
 pub use crate::crypto::X25519Dalek;
 pub use crate::lt_2::BankId;
 pub use crate::lt_2::CertStore;
+pub use crate::lt_2::MUTABLE_FW_UPDATE_SIZE_MAX;
 pub use crate::lt_2::ResponseStatus;
 pub use crate::lt_2::SleepReq;
 pub use crate::lt_2::StartupReq;

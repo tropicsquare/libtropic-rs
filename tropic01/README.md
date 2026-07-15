@@ -16,6 +16,7 @@ Most of the critical features are implemented. If you are missing a feature, ple
   - [x] Resend request
   - [x] Startup request
   - [x] Get Log Request
+  - [x] Mutable firmware update (ACAB and newer)
   - [ ] Other Bootloader commands
 - [ ] Application API
   - [x] Handshake request & secure session start

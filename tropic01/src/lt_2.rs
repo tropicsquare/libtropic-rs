@@ -44,6 +44,9 @@ const L2_GET_INFO_BLOCK_LEN: usize = 128;
 const CERT_STORE_NUM_CERTS: usize = 4;
 const CERT_STORE_VERSION: u8 = 1;
 const CERT_STORE_HEADER_SIZE: usize = 2 + CERT_STORE_NUM_CERTS * 2;
+const MUTABLE_FW_UPDATE_HEADER_LEN: usize = 104;
+const MUTABLE_FW_UPDATE_DATA_PREFIX_LEN: usize = 32 + 2;
+const MUTABLE_FW_UPDATE_DATA_LEN_MIN: usize = 4;
 /// Protocol Name
 /// See section 7.4.1 of the datasheet, section `Protocol Name`.
 const PROTOCOL_NAME: &[u8; 32] = b"Noise_KK1_25519_AESGCM_SHA256\x00\x00\x00";
@@ -56,10 +59,15 @@ enum L2RequestId {
     GetInfo = 0x01,
     GetLog = 0xa2,
     HandshakeReq = 0x02,
+    MutableFwUpdateReq = 0xb0,
+    MutableFwUpdateDataReq = 0xb1,
     ResendReq = 0x10,
     SleepReq = 0x20,
     StartupReq = 0xb3,
 }
+
+/// Largest signed mutable-firmware package accepted by TROPIC01 ACAB chips.
+pub const MUTABLE_FW_UPDATE_SIZE_MAX: usize = 30_720;
 
 /// Represents all possible response status codes the chip may return.
 #[derive(
@@ -137,6 +145,96 @@ impl<'a> L2RequestFrame<'a> {
             crc.update(d);
         }
         crc.get().into()
+    }
+}
+
+struct MutableFirmwareUpdate<'a> {
+    header: &'a [u8],
+    chunks: &'a [u8],
+}
+
+impl<'a> MutableFirmwareUpdate<'a> {
+    fn parse(firmware: &'a [u8]) -> Result<Self, ParsingError> {
+        if firmware.len() > MUTABLE_FW_UPDATE_SIZE_MAX {
+            return Err(ParsingError::InvalidData);
+        }
+
+        let (header_len, firmware) = firmware
+            .split_first()
+            .ok_or(ParsingError::InsufficientData)?;
+        if usize::from(*header_len) != MUTABLE_FW_UPDATE_HEADER_LEN {
+            return Err(ParsingError::InvalidData);
+        }
+        let (firmware, header) = take(firmware, MUTABLE_FW_UPDATE_HEADER_LEN)?;
+
+        let fw_type = header
+            .get(96..98)
+            .and_then(|fw_type| fw_type.try_into().ok())
+            .map(u16::from_le_bytes)
+            .ok_or(ParsingError::InsufficientData)?;
+        if !matches!(fw_type, 1 | 2) || header.get(98) != Some(&0) {
+            return Err(ParsingError::InvalidData);
+        }
+
+        let chunks = firmware;
+        let mut remaining = chunks;
+        let mut chunk_count = 0usize;
+        while !remaining.is_empty() {
+            let (request_len, rest) = remaining
+                .split_first()
+                .ok_or(ParsingError::InsufficientData)?;
+            let request_len = usize::from(*request_len);
+            if !(MUTABLE_FW_UPDATE_DATA_PREFIX_LEN + MUTABLE_FW_UPDATE_DATA_LEN_MIN
+                ..=L2_CHUNK_MAX_DATA_SIZE)
+                .contains(&request_len)
+            {
+                return Err(ParsingError::InvalidData);
+            }
+
+            let (rest, request) = take(rest, request_len)?;
+            let data_len = request_len - MUTABLE_FW_UPDATE_DATA_PREFIX_LEN;
+            if data_len & 3 != 0 {
+                return Err(ParsingError::InvalidData);
+            }
+            let offset = request
+                .get(32..34)
+                .and_then(|offset| offset.try_into().ok())
+                .map(u16::from_le_bytes)
+                .ok_or(ParsingError::InsufficientData)?;
+            if offset & 3 != 0 {
+                return Err(ParsingError::InvalidData);
+            }
+            chunk_count += 1;
+            remaining = rest;
+        }
+
+        if chunk_count == 0 {
+            return Err(ParsingError::InsufficientData);
+        }
+
+        Ok(Self { header, chunks })
+    }
+
+    const fn chunks(&self) -> MutableFirmwareUpdateChunks<'a> {
+        MutableFirmwareUpdateChunks {
+            remaining: self.chunks,
+        }
+    }
+}
+
+struct MutableFirmwareUpdateChunks<'a> {
+    remaining: &'a [u8],
+}
+
+impl<'a> Iterator for MutableFirmwareUpdateChunks<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (request_len, rest) = self.remaining.split_first()?;
+        let request_len = usize::from(*request_len);
+        let request = rest.get(..request_len)?;
+        self.remaining = rest.get(request_len..)?;
+        Some(request)
     }
 }
 
@@ -382,6 +480,44 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, NoSession> {
         let data = [&[req as u8][..]];
         let frame = L2RequestFrame::new(L2RequestId::StartupReq as u8, &data[..]);
         l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs)?;
+        Ok(())
+    }
+
+    /// Install a signed mutable-firmware package on ACAB or newer silicon.
+    ///
+    /// `firmware` must contain the complete `*_signed_chunks.bin` artifact
+    /// supplied by Tropic Square. The package layout is fully validated before
+    /// the first request is sent, then transferred using `Mutable_FW_Update_Req`
+    /// followed by its `Mutable_FW_Update_Data_Req` chunks. The chip verifies
+    /// the package's signature.
+    ///
+    /// The chip must already be in start-up mode, normally by calling
+    /// [`Self::startup_req`] with [`StartupReq::MaintenanceReboot`]. This method
+    /// does not reboot the chip after installing the package.
+    pub fn mutable_fw_update(
+        &mut self,
+        firmware: &[u8],
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let update = MutableFirmwareUpdate::parse(firmware).map_err(|_| Error::InvalidParameter)?;
+
+        self.mutable_fw_update_transfer(L2RequestId::MutableFwUpdateReq, update.header)?;
+        for chunk in update.chunks() {
+            self.mutable_fw_update_transfer(L2RequestId::MutableFwUpdateDataReq, chunk)?;
+        }
+        Ok(())
+    }
+
+    fn mutable_fw_update_transfer(
+        &mut self,
+        request_id: L2RequestId,
+        request_data: &[u8],
+    ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
+        let data = [request_data];
+        let frame = L2RequestFrame::new(request_id as u8, &data);
+        let response = l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs)?;
+        if response.len != 0 {
+            return Err(Error::InvalidResponse);
+        }
         Ok(())
     }
 
@@ -751,6 +887,7 @@ mod test {
     use crate::Aes256GcmKey;
     use crate::FromBytes;
     use crate::Nonce;
+    use crate::ParsingError;
     use crate::crypto::X25519Dalek;
     use crate::crypto::aesgcm_decrypt;
     use crate::crypto::hkdf;
@@ -758,7 +895,10 @@ mod test {
     use crate::keys::SH0PRIV_ENG_SAMPLE;
     use crate::keys::SH0PUB_ENG_SAMPLE;
     use crate::lt_2::L2RequestFrame;
+    use crate::lt_2::L2RequestId;
     use crate::lt_2::L2ResponseFrame;
+    use crate::lt_2::MUTABLE_FW_UPDATE_HEADER_LEN;
+    use crate::lt_2::MutableFirmwareUpdate;
     use crate::lt_2::PROTOCOL_NAME;
     use crate::lt_2::encrypted_cmd_chunk_layout;
     use crate::lt_2::process_handshake;
@@ -786,6 +926,57 @@ mod test {
         assert_eq!(encrypted_cmd_chunk_layout(252), (1, 252));
         assert_eq!(encrypted_cmd_chunk_layout(504), (2, 252));
         assert_eq!(encrypted_cmd_chunk_layout(505), (3, 1));
+    }
+
+    #[test]
+    fn mutable_firmware_update_parses_header_and_data_requests() {
+        let mut firmware = [0u8; 105 + 39 + 43];
+        firmware[0] = MUTABLE_FW_UPDATE_HEADER_LEN as u8;
+        firmware[97..99].copy_from_slice(&1u16.to_le_bytes());
+        firmware[100] = 1;
+
+        let first_chunk = 105;
+        firmware[first_chunk] = 38;
+        firmware[first_chunk + 1 + 34..first_chunk + 1 + 38].fill(0xa5);
+
+        let second_chunk = first_chunk + 1 + 38;
+        firmware[second_chunk] = 42;
+        firmware[second_chunk + 1 + 32..second_chunk + 1 + 34].copy_from_slice(&4u16.to_le_bytes());
+        firmware[second_chunk + 1 + 34..].fill(0x5a);
+
+        let update = MutableFirmwareUpdate::parse(&firmware).unwrap();
+        assert_eq!(update.header.len(), 104);
+        let mut chunks = update.chunks();
+        assert_eq!(chunks.next().unwrap().len(), 38);
+        assert_eq!(chunks.next().unwrap().len(), 42);
+        assert!(chunks.next().is_none());
+
+        let header_data = [update.header];
+        let header_frame = L2RequestFrame::new(L2RequestId::MutableFwUpdateReq as u8, &header_data);
+        assert_eq!(header_frame.id, 0xb0);
+        assert_eq!(header_frame.len, 0x68);
+
+        let first_chunk = update.chunks().next().unwrap();
+        let chunk_data = [first_chunk];
+        let chunk_frame =
+            L2RequestFrame::new(L2RequestId::MutableFwUpdateDataReq as u8, &chunk_data);
+        assert_eq!(chunk_frame.id, 0xb1);
+        assert_eq!(chunk_frame.len, 0x26);
+    }
+
+    #[test]
+    fn mutable_firmware_update_rejects_misaligned_chunk_offsets() {
+        let mut firmware = [0u8; 105 + 39];
+        firmware[0] = MUTABLE_FW_UPDATE_HEADER_LEN as u8;
+        firmware[97..99].copy_from_slice(&2u16.to_le_bytes());
+        firmware[100] = 1;
+        firmware[105] = 38;
+        firmware[105 + 1 + 32..105 + 1 + 34].copy_from_slice(&2u16.to_le_bytes());
+
+        assert!(matches!(
+            MutableFirmwareUpdate::parse(&firmware),
+            Err(ParsingError::InvalidData)
+        ));
     }
 
     #[test]
