@@ -9,13 +9,13 @@ fn main() -> Result<(), anyhow::Error> {
 
     let usage = || {
         eprintln!(
-                "Usage: {} <command> [device_path]\n\nCommands:\n  hello_world              \
+            "Usage: {} <command> [device_path]\n\nCommands:\n  hello_world              \
                  Session + ping\n  identify_chip            Read chip ID, FW versions, bank \
                  headers\n  full_chain_verification  Dump X.509 certificate chain to DER files\n  \
                  ecc_eddsa                ECC key generation + EdDSA signing\n\ndevice_path \
                  defaults to /dev/ttyACM0",
-                args[0]
-            );
+            args[0]
+        );
     };
 
     let command = match args.get(1) {

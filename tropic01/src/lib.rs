@@ -387,12 +387,14 @@ impl Session {
 
 #[cfg(test)]
 mod test {
+    use zeroize::Zeroize;
+
     use crate::ActiveSession;
     use crate::Aes256GcmKey;
+    use crate::Error;
     use crate::Nonce;
+    use crate::ResponseStatus;
     use crate::Session;
-    use crate::{Error, ResponseStatus};
-    use zeroize::Zeroize;
 
     #[test]
     fn increment_nonce_works() {

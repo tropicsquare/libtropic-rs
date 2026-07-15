@@ -487,13 +487,13 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, NoSession> {
     ///
     /// `firmware` must contain the complete `*_signed_chunks.bin` artifact
     /// supplied by Tropic Square. The package layout is fully validated before
-    /// the first request is sent, then transferred using `Mutable_FW_Update_Req`
-    /// followed by its `Mutable_FW_Update_Data_Req` chunks. The chip verifies
-    /// the package's signature.
+    /// the first request is sent, then transferred using
+    /// `Mutable_FW_Update_Req` followed by its `Mutable_FW_Update_Data_Req`
+    /// chunks. The chip verifies the package's signature.
     ///
     /// The chip must already be in start-up mode, normally by calling
-    /// [`Self::startup_req`] with [`StartupReq::MaintenanceReboot`]. This method
-    /// does not reboot the chip after installing the package.
+    /// [`Self::startup_req`] with [`StartupReq::MaintenanceReboot`]. This
+    /// method does not reboot the chip after installing the package.
     pub fn mutable_fw_update(
         &mut self,
         firmware: &[u8],
