@@ -4,6 +4,7 @@ use embedded_hal::spi::ErrorType as SpiErrorType;
 use embedded_hal::spi::SpiDevice;
 use zerocopy::IntoBytes;
 use zerocopy::little_endian::U16;
+use zeroize::Zeroize;
 
 use crate::ActiveSession;
 use crate::Error;
@@ -20,6 +21,12 @@ use crate::lt_2::l2_send_encrypted_cmd;
 use crate::take;
 use crate::take_le_u16;
 use crate::take_u8;
+
+fn invalidate_response_material(state: &mut ActiveSession, ciphertext: &mut [u8], tag: &mut [u8]) {
+    state.invalidate();
+    ciphertext.zeroize();
+    tag.zeroize();
+}
 
 #[derive(Clone, Debug)]
 struct DecryptedL3CommandPacket<'a> {
@@ -285,7 +292,9 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         packet: DecryptedL3CommandPacket<'_>,
     ) -> Result<L3ResultData<'_>, Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>>
     {
-        let session = &mut self.state.0;
+        if self.state.session_mut().is_none() {
+            return Err(Error::SessionInvalidated);
+        }
         self.l3_buf.clear();
 
         self.l3_buf
@@ -303,18 +312,35 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let size = U16::try_from(len)
         // Safety: Expect is safe here since l3_buf capacity (L3_FRAME_MAX_SIZE) < U16::MAX.
         .expect("cmd len to be in u16 range");
-        let tag = aesgcm_encrypt(
-            &session.encrypt,
-            &session.encryption_iv,
-            b"",
-            &mut self.l3_buf,
-        )
-        .map_err(Error::Encryption)?;
+        let encryption_result = {
+            let Some(session) = self.state.session_mut() else {
+                return Err(Error::SessionInvalidated);
+            };
+            aesgcm_encrypt(
+                &session.encrypt,
+                &session.encryption_iv,
+                b"",
+                &mut self.l3_buf,
+            )
+        };
+        let tag = match encryption_result {
+            Ok(tag) => tag,
+            Err(error) => {
+                self.invalidate_session();
+                return Err(Error::Encryption(error));
+            },
+        };
 
-        session
-            .encryption_iv
-            .increment()
-            .map_err(|_| Error::NonceOverflow)?;
+        let nonce_result = {
+            let Some(session) = self.state.session_mut() else {
+                return Err(Error::SessionInvalidated);
+            };
+            session.encryption_iv.increment()
+        };
+        if nonce_result.is_err() {
+            self.invalidate_session();
+            return Err(Error::NonceOverflow);
+        }
 
         let cmd = EncryptedL3CommandPacket {
             cmd_size: size,
@@ -322,13 +348,26 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
             tag,
         };
 
-        l2_send_encrypted_cmd(cmd, &mut self.l2_buf, &mut self.spi, &mut self.cs)?;
-        let _ = l2_receive_encrypted_cmd(
+        if let Err(error) =
+            l2_send_encrypted_cmd(cmd, &mut self.l2_buf, &mut self.spi, &mut self.cs)
+        {
+            if error.invalidates_secure_session() {
+                self.invalidate_session();
+            }
+            return Err(error);
+        }
+        let receive_result = l2_receive_encrypted_cmd(
             &mut self.l2_buf,
             &mut self.l3_buf,
             &mut self.spi,
             &mut self.cs,
-        )?;
+        );
+        if let Err(error) = receive_result {
+            if error.invalidates_secure_session() {
+                self.invalidate_session();
+            }
+            return Err(error);
+        }
 
         // Remove the tag and cmd_size from the l3_buf, leaving only the encrypted data.
         //
@@ -340,15 +379,51 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let l3_buf_len = self.l3_buf.len();
         let (l3_buf, tag) = self.l3_buf.split_at_mut(l3_buf_len - L3_TAG_SIZE);
 
-        aesgcm_decrypt(&session.decrypt, &session.decryption_iv, b"", tag, l3_buf)
-            .map_err(Error::Decryption)?;
+        let decryption_result = {
+            let Some(session) = self.state.session_mut() else {
+                l3_buf.zeroize();
+                tag.zeroize();
+                return Err(Error::SessionInvalidated);
+            };
+            aesgcm_decrypt(&session.decrypt, &session.decryption_iv, b"", tag, l3_buf)
+        };
+        if let Err(error) = decryption_result {
+            invalidate_response_material(&mut self.state, l3_buf, tag);
+            return Err(Error::Decryption(error));
+        }
 
-        session
-            .decryption_iv
-            .increment()
-            .map_err(|_| Error::NonceOverflow)?;
+        let nonce_result = {
+            let Some(session) = self.state.session_mut() else {
+                l3_buf.zeroize();
+                tag.zeroize();
+                return Err(Error::SessionInvalidated);
+            };
+            session.decryption_iv.increment()
+        };
+        if nonce_result.is_err() {
+            invalidate_response_material(&mut self.state, l3_buf, tag);
+            return Err(Error::NonceOverflow);
+        }
 
-        let res = L3ResultData::from_bytes(l3_buf)?;
+        let result_byte = match l3_buf.first().copied() {
+            Some(result) => result,
+            None => {
+                invalidate_response_material(&mut self.state, l3_buf, tag);
+                return Err(ParsingError::InsufficientData.into());
+            },
+        };
+        let result = match L3ResultStatus::try_from(result_byte) {
+            Ok(result) => result,
+            Err(error) => {
+                let error = ParsingError::from(error);
+                invalidate_response_material(&mut self.state, l3_buf, tag);
+                return Err(error.into());
+            },
+        };
+        let res = L3ResultData {
+            result,
+            data: &l3_buf[1..],
+        };
 
         match res.result {
             L3ResultStatus::Ok => (),

@@ -10,6 +10,7 @@ use embedded_hal::spi::SpiDevice;
 use packed_struct::PackingError;
 use packed_struct::derive::PackedStruct;
 use zeroize::Zeroize;
+use zeroize::ZeroizeOnDrop;
 
 pub use crate::crypto::CryptoError;
 pub use crate::crypto::X25519;
@@ -68,7 +69,24 @@ const L3_FRAME_MAX_SIZE: usize = L3_RES_SIZE_SIZE + L3_PACKET_MAX_SIZE + L3_TAG_
 pub struct NoSession;
 
 /// Type representing an active secure session with the chip.
-pub struct ActiveSession(Session);
+pub struct ActiveSession(Option<Session>);
+
+impl ActiveSession {
+    const fn new(session: Session) -> Self {
+        Self(Some(session))
+    }
+
+    const fn session_mut(&mut self) -> Option<&mut Session> {
+        self.0.as_mut()
+    }
+
+    fn invalidate(&mut self) {
+        if let Some(session) = self.0.as_mut() {
+            session.zeroize();
+        }
+        self.0 = None;
+    }
+}
 
 /// Tropic01 driver
 pub struct Tropic01<SPI, CS, S = NoSession> {
@@ -247,6 +265,8 @@ pub enum Error<ESpi, EGpio> {
     CounterInvalid,
     #[display("Secure-channel nonce exhausted")]
     NonceOverflow,
+    #[display("Secure-channel session is invalidated; start a new session")]
+    SessionInvalidated,
     #[display("L3 slot is empty")]
     SlotEmpty,
     #[display("L3 slot is invalid")]
@@ -262,6 +282,17 @@ pub enum Error<ESpi, EGpio> {
 impl<ESpi, EGpio> From<ParsingError> for Error<ESpi, EGpio> {
     fn from(other: ParsingError) -> Self {
         Self::ParsingError(other)
+    }
+}
+
+impl<ESpi, EGpio> Error<ESpi, EGpio> {
+    const fn invalidates_secure_session(&self) -> bool {
+        matches!(
+            self,
+            Self::L2ResponseError(ResponseStatus::TagErr | ResponseStatus::NoSession)
+                | Self::L3ResponseBufferOverflow
+                | Self::ParsingError(_)
+        )
     }
 }
 
@@ -326,12 +357,20 @@ impl Nonce {
 #[derive(Debug)]
 struct NonceOverflow;
 
-#[derive(Zeroize)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 struct Session {
     encryption_iv: Nonce,
     decryption_iv: Nonce,
     encrypt: Aes256GcmKey,
     decrypt: Aes256GcmKey,
+}
+
+impl<SPI, CS> Tropic01<SPI, CS, ActiveSession> {
+    fn invalidate_session(&mut self) {
+        self.state.invalidate();
+        self.l3_buf.as_mut_slice().zeroize();
+        self.l3_buf.clear();
+    }
 }
 
 impl Session {
@@ -347,7 +386,12 @@ impl Session {
 
 #[cfg(test)]
 mod test {
+    use crate::ActiveSession;
+    use crate::Aes256GcmKey;
     use crate::Nonce;
+    use crate::Session;
+    use crate::{Error, ResponseStatus};
+    use zeroize::Zeroize;
 
     #[test]
     fn increment_nonce_works() {
@@ -376,5 +420,33 @@ mod test {
             nonce.to_iv(),
             [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0]
         );
+    }
+
+    #[test]
+    fn invalidating_session_removes_and_zeroizes_session_material() {
+        let mut session = Session::new(Aes256GcmKey([0x55; 32]), Aes256GcmKey([0xaa; 32]));
+        session.encryption_iv = Nonce(7);
+        session.decryption_iv = Nonce(9);
+
+        session.zeroize();
+        assert_eq!(session.encryption_iv.0, 0);
+        assert_eq!(session.decryption_iv.0, 0);
+        assert_eq!(session.encrypt.0, [0; 32]);
+        assert_eq!(session.decrypt.0, [0; 32]);
+
+        let mut state = ActiveSession::new(session);
+        state.invalidate();
+        assert!(state.session_mut().is_none());
+    }
+
+    #[test]
+    fn chip_side_session_errors_poison_the_host_session() {
+        let tag_error = Error::<(), ()>::L2ResponseError(ResponseStatus::TagErr);
+        let no_session = Error::<(), ()>::L2ResponseError(ResponseStatus::NoSession);
+        let command_error = Error::<(), ()>::L3CmdFailed;
+
+        assert!(tag_error.invalidates_secure_session());
+        assert!(no_session.invalidates_secure_session());
+        assert!(!command_error.invalidates_secure_session());
     }
 }

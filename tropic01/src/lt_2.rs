@@ -451,7 +451,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, NoSession> {
             l2_buf: self.l2_buf,
             l3_buf: self.l3_buf,
             cs: self.cs,
-            state: ActiveSession(super::Session::new(kcmd, kres)),
+            state: ActiveSession::new(super::Session::new(kcmd, kres)),
         })
     }
 
@@ -472,6 +472,21 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, NoSession> {
 }
 
 impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
+    /// Discard host-side secure-session state without contacting the chip.
+    ///
+    /// Use this after an error that invalidated the runtime session. For a
+    /// healthy session, prefer [`Self::session_abort`] so the chip is notified.
+    pub fn into_no_session(mut self) -> Tropic01<SPI, CS, NoSession> {
+        self.invalidate_session();
+        Tropic01 {
+            spi: self.spi,
+            l2_buf: self.l2_buf,
+            l3_buf: self.l3_buf,
+            cs: self.cs,
+            state: NoSession,
+        }
+    }
+
     /// Abort the current secure session.
     ///
     /// Consumes `self` in the `ActiveSession` state and returns a `Tropic01` in
@@ -487,6 +502,10 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
             Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>,
         ),
     > {
+        // The chip invalidates its session even if the response is lost. Poison
+        // the host state before sending so a transport failure cannot leave a
+        // seemingly usable session behind.
+        self.invalidate_session();
         let data = [];
         let frame = L2RequestFrame::new(L2RequestId::EncryptedSessionAbt as u8, &data[..]);
         let res = match l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs) {
@@ -549,7 +568,9 @@ fn l2_transfer_helper<'a, SPI: SpiDevice, CS: OutputPin>(
         }
 
         match res.resp_status {
-            ResponseStatus::NoSession => return Err(Error::InvalidL2Response),
+            ResponseStatus::NoSession => {
+                return Err(Error::L2ResponseError(ResponseStatus::NoSession));
+            },
             ResponseStatus::GenErr => {
                 // Retry but ask chip to resend the last response frame.
                 req.replace(L2RequestFrame::new(L2RequestId::ResendReq as u8, &[]));
@@ -654,7 +675,7 @@ pub(super) fn l2_receive_encrypted_cmd<'a, SPI: SpiDevice, CS: OutputPin>(
             ResponseStatus::ResOk => {
                 return Ok(L3ResultPacket::from_bytes(l3_buf)?);
             },
-            _ => return Err(Error::L3CmdFailed),
+            status => return Err(Error::L2ResponseError(status)),
         }
     }
     Err(Error::L3CmdFailed)
