@@ -21,7 +21,6 @@ use crate::L2_CMD_REQ_LEN;
 use crate::L3_CMD_DATA_SIZE_MAX;
 use crate::L3_CMD_SIZE_SIZE;
 use crate::L3_FRAME_MAX_SIZE;
-use crate::L3_RES_SIZE_SIZE;
 use crate::L3_TAG_SIZE;
 use crate::Nonce;
 use crate::ParsingError;
@@ -255,15 +254,21 @@ pub enum SleepReq {
 }
 
 #[derive(Debug)]
-struct HandShakeResponse<'a> {
-    etpub: &'a [u8],
-    ttauth: &'a [u8],
+struct HandShakeResponse {
+    etpub: [u8; 32],
+    ttauth: [u8; 16],
 }
 
-impl<'a> FromBytes<'a> for HandShakeResponse<'a> {
-    fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
+impl FromBytes<'_> for HandShakeResponse {
+    fn from_bytes(slice: &[u8]) -> Result<Self, ParsingError> {
         let (rest, etpub) = take(slice, 32)?;
         let (_, ttauth) = take(rest, 16)?;
+        let etpub = etpub
+            .try_into()
+            .map_err(|_| ParsingError::InsufficientData)?;
+        let ttauth = ttauth
+            .try_into()
+            .map_err(|_| ParsingError::InsufficientData)?;
         Ok(Self { etpub, ttauth })
     }
 }
@@ -420,16 +425,8 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, NoSession> {
             Ok(h) => h,
             Err(e) => return Err((self, e)),
         };
-        let etpub: [u8; 32] = hdshk
-            .etpub
-            .try_into()
-            // Safety: This is safe since the field is verified in HandShakeResponse
-            .expect("response to contain public key (32 bytes)");
-        let ttauth: [u8; 16] = hdshk
-            .ttauth
-            .try_into()
-            // Safety: This is safe since the field is verified in HandShakeResponse
-            .expect("response to contain authentication tag (16 bytes)");
+        let etpub = hdshk.etpub;
+        let ttauth = hdshk.ttauth;
 
         let (kcmd, kres) = match process_handshake(
             x25519,
@@ -459,10 +456,8 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, NoSession> {
         &mut self,
         ehpub: X::PublicKey,
         pkey_index: u8,
-    ) -> Result<
-        HandShakeResponse<'_>,
-        Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>,
-    > {
+    ) -> Result<HandShakeResponse, Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>>
+    {
         let data = [ehpub.as_ref(), &[pkey_index][..]];
         let frame = L2RequestFrame::new(L2RequestId::HandshakeReq as u8, &data[..]);
         let res = l2_transfer(frame, &mut self.l2_buf, &mut self.spi, &mut self.cs)?;
@@ -601,16 +596,8 @@ pub(super) fn l2_send_encrypted_cmd<'a, SPI: SpiDevice, CS: OutputPin>(
     cs: &'a mut Option<CS>,
 ) -> Result<(), Error<<SPI as SpiErrorType>::Error, <CS as GpioErrorType>::Error>> {
     let cmd_size = usize::from(req.cmd_size());
-    // Number of chunks to be send
-    let chunk_num = (L3_CMD_SIZE_SIZE + cmd_size + L3_TAG_SIZE)
-        .checked_div(L2_CHUNK_MAX_DATA_SIZE)
-        // Safety: Expect is safe here since L2_CHUNK_MAX_DATA_SIZE > 0
-        .expect("L2_CHUNK_MAX_DATA_SIZE not to equal 0")
-        + 1;
-    let chunk_last_len = (L3_RES_SIZE_SIZE + cmd_size + L3_TAG_SIZE)
-        .checked_rem(L2_CHUNK_MAX_DATA_SIZE)
-        // Safety: Expect is safe here since L2_CHUNK_MAX_DATA_SIZE > 0
-        .expect("L2_CHUNK_MAX_DATA_SIZE not to equal 0");
+    let packet_size = L3_CMD_SIZE_SIZE + cmd_size + L3_TAG_SIZE;
+    let (chunk_num, chunk_last_len) = encrypted_cmd_chunk_layout(packet_size);
 
     let cmd_size = req.cmd_size();
     let cmd_size = cmd_size.as_bytes();
@@ -632,9 +619,7 @@ pub(super) fn l2_send_encrypted_cmd<'a, SPI: SpiDevice, CS: OutputPin>(
         l2_buf[0] = L2RequestId::EncryptedCmdReq as u8;
         l2_buf[1] = n_in_chunk as u8;
         for n in 0..n_in_chunk {
-            l2_buf[n + 2] = iter.next()
-            // Safety: Expect is safe here since the for-loops will not draw more items than are in `iter`.
-            .expect("item to be present");
+            l2_buf[n + 2] = iter.next().ok_or(Error::InvalidParameter)?;
         }
 
         // Since L2RequestFrame is not used here, CRC needs to be calculated manually
@@ -649,6 +634,15 @@ pub(super) fn l2_send_encrypted_cmd<'a, SPI: SpiDevice, CS: OutputPin>(
         let _ = l2_transfer_helper(None, l2_buf, spi, cs)?;
     }
     Ok(())
+}
+
+const fn encrypted_cmd_chunk_layout(packet_size: usize) -> (usize, usize) {
+    if packet_size == 0 {
+        return (0, 0);
+    }
+    let chunk_num = packet_size.div_ceil(L2_CHUNK_MAX_DATA_SIZE);
+    let chunk_last_len = packet_size - (chunk_num - 1) * L2_CHUNK_MAX_DATA_SIZE;
+    (chunk_num, chunk_last_len)
 }
 
 pub(super) fn l2_receive_encrypted_cmd<'a, SPI: SpiDevice, CS: OutputPin>(
@@ -766,6 +760,7 @@ mod test {
     use crate::lt_2::L2RequestFrame;
     use crate::lt_2::L2ResponseFrame;
     use crate::lt_2::PROTOCOL_NAME;
+    use crate::lt_2::encrypted_cmd_chunk_layout;
     use crate::lt_2::process_handshake;
 
     #[test]
@@ -784,6 +779,13 @@ mod test {
         let data = [0x01, 0x02, 0x01, 0x01, 0x2e, 0x12];
         let frame = L2ResponseFrame::from_bytes(&data).unwrap();
         assert_eq!(frame.crc, 0x2e12);
+    }
+
+    #[test]
+    fn encrypted_command_chunk_layout_has_no_empty_final_chunk() {
+        assert_eq!(encrypted_cmd_chunk_layout(252), (1, 252));
+        assert_eq!(encrypted_cmd_chunk_layout(504), (2, 252));
+        assert_eq!(encrypted_cmd_chunk_layout(505), (3, 1));
     }
 
     #[test]

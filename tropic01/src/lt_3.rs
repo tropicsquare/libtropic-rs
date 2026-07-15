@@ -162,12 +162,14 @@ pub(super) struct L3ResultPacket<'a> {
 impl<'a> FromBytes<'a> for L3ResultPacket<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
         let (rest, size) = take_le_u16(slice)?;
+        if size == 0 {
+            return Err(ParsingError::InvalidData);
+        }
         let (rest, ciphertext) = take(rest, size as usize)?;
         let (_, tag_slice) = take(rest, 16)?;
         let tag: [u8; 16] = tag_slice
             .try_into()
-            // Safety: take(16) guarantees exactly 16 bytes
-            .expect("tag to be 16 bytes");
+            .map_err(|_| ParsingError::InsufficientData)?;
         Ok(Self {
             _size: size,
             _ciphertext: ciphertext,
@@ -275,13 +277,16 @@ impl<'a> EccKeyReadResponse<'a> {
 
 #[derive(Debug, Clone)]
 struct SignResponse<'a> {
-    signature: &'a [u8],
+    signature: &'a [u8; 64],
 }
 
 impl<'a> FromBytes<'a> for SignResponse<'a> {
     fn from_bytes(slice: &'a [u8]) -> Result<Self, ParsingError> {
         let (rest, _) = take(slice, 15)?;
         let (_, signature) = take(rest, 64)?;
+        let signature = signature
+            .try_into()
+            .map_err(|_| ParsingError::InsufficientData)?;
         Ok(Self { signature })
     }
 }
@@ -299,19 +304,19 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
 
         self.l3_buf
             .try_extend_from_slice(&[packet.id])
-            // Safety: Expect is safe here since it is verified before that l3_buf has enough capacity, and l3_buf was just emptied.
-            .expect("packet id to fit into buffer");
+            .map_err(|_| Error::RequestExceedsSize)?;
         for data in packet.data {
             self.l3_buf
                 .try_extend_from_slice(data)
-                // Safety: This is safe since ping and eddsa_sign methods verify that their raw data does not exceed L3_CMD_DATA_SIZE_MAX.
-                .expect("packet msg to fit into buffer");
+                .map_err(|_| Error::RequestExceedsSize)?;
         }
         let len = self.l3_buf.len();
+        if len > L3_CMD_DATA_SIZE_MAX + 1 {
+            self.l3_buf.zeroize();
+            return Err(Error::RequestExceedsSize);
+        }
 
-        let size = U16::try_from(len)
-        // Safety: Expect is safe here since l3_buf capacity (L3_FRAME_MAX_SIZE) < U16::MAX.
-        .expect("cmd len to be in u16 range");
+        let size = U16::try_from(len).map_err(|_| Error::RequestExceedsSize)?;
         let encryption_result = {
             let Some(session) = self.state.session_mut() else {
                 return Err(Error::SessionInvalidated);
@@ -369,12 +374,17 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
             return Err(error);
         }
 
-        // Remove the tag and cmd_size from the l3_buf, leaving only the encrypted data.
-        //
-        // SAFETY: `drain` and `split_at_mut` are safe here because
-        // `l2_receive_encrypted_cmd` validates `l3_buf` by parsing into
-        // `L3ResultPacket``
-        debug_assert!(self.l3_buf.len() > L3_RES_SIZE_SIZE + L3_TAG_SIZE);
+        // A result must contain at least its size, one encrypted result byte, and
+        // its authentication tag. Reject a zero-length ciphertext before using
+        // slice operations that assume that result byte exists.
+        if self.l3_buf.len() <= L3_RES_SIZE_SIZE + L3_TAG_SIZE {
+            self.invalidate_session();
+            self.l3_buf.zeroize();
+            return Err(Error::InvalidResponse);
+        }
+
+        // Remove the tag and result size from the l3_buf, leaving only the
+        // encrypted data.
         self.l3_buf.drain(0..L3_RES_SIZE_SIZE);
         let l3_buf_len = self.l3_buf.len();
         let (l3_buf, tag) = self.l3_buf.split_at_mut(l3_buf_len - L3_TAG_SIZE);
@@ -463,7 +473,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let data = [&[n][..]];
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::RandomValueGet as u8, &data[..]);
         let res = self.lt_l3_transfer(cmd_raw)?;
-        Ok(&res.data[3..])
+        res.data.get(3..).ok_or(Error::InvalidResponse)
     }
 
     pub fn ecc_key_generate(
@@ -509,12 +519,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let data = [slot.as_bytes(), &padding[..], &hash[..]];
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::EcDSASign as u8, &data[..]);
         let res = self.lt_l3_transfer(cmd_raw)?;
-        let signature = SignResponse::from_bytes(res.data)?.signature;
-        debug_assert!(signature.len() == 64);
-        Ok(signature
-            .try_into()
-            // Safety: Expect is safe here because SignResponse verifies the signature length.
-            .expect("signature to be 64 bytes long"))
+        Ok(SignResponse::from_bytes(res.data)?.signature)
     }
 
     pub fn eddsa_sign(
@@ -530,12 +535,7 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let data = [slot.as_bytes(), &padding[..], msg];
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::EdDSASign as u8, &data[..]);
         let res = self.lt_l3_transfer(cmd_raw)?;
-        let signature = SignResponse::from_bytes(res.data)?.signature;
-        debug_assert!(signature.len() == 64);
-        Ok(signature
-            .try_into()
-            // Safety: Expect is safe here because SignResponse verifies the signature length.
-            .expect("signature to be 64 bytes long"))
+        Ok(SignResponse::from_bytes(res.data)?.signature)
     }
 
     /// Initialize a monotonic counter with a specific value.
@@ -603,14 +603,13 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::MCounterGet as u8, &data[..]);
         let res = self.lt_l3_transfer(cmd_raw)?;
 
-        // Response contains 1 byte result + 4 bytes counter value (little-endian)
-        if res.data.len() < 4 {
-            return Err(Error::InvalidResponse);
-        }
-
-        let value = u32::from_le_bytes([res.data[3], res.data[4], res.data[5], res.data[6]]);
-
-        Ok(value)
+        // Skip three bytes of padding, then read the little-endian counter.
+        let value = res
+            .data
+            .get(3..7)
+            .and_then(|value| value.try_into().ok())
+            .ok_or(Error::InvalidResponse)?;
+        Ok(u32::from_le_bytes(value))
     }
 
     /// Store an ECC key in the given slot.
@@ -703,16 +702,13 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let data = [address.as_bytes()];
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::RConfigRead as u8, &data[..]);
         let res = self.lt_l3_transfer(cmd_raw)?;
-        // Skip 3 bytes padding, read u32 LE
-        if res.data.len() < 7 {
-            return Err(Error::InvalidResponse);
-        }
-        Ok(u32::from_le_bytes([
-            res.data[3],
-            res.data[4],
-            res.data[5],
-            res.data[6],
-        ]))
+        // Skip three bytes of padding, then read the little-endian value.
+        let value = res
+            .data
+            .get(3..7)
+            .and_then(|value| value.try_into().ok())
+            .ok_or(Error::InvalidResponse)?;
+        Ok(u32::from_le_bytes(value))
     }
 
     /// Erase R_CONFIG.
@@ -745,16 +741,13 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let data = [address.as_bytes()];
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::IConfigRead as u8, &data[..]);
         let res = self.lt_l3_transfer(cmd_raw)?;
-        // Skip 3 bytes padding, read u32 LE
-        if res.data.len() < 7 {
-            return Err(Error::InvalidResponse);
-        }
-        Ok(u32::from_le_bytes([
-            res.data[3],
-            res.data[4],
-            res.data[5],
-            res.data[6],
-        ]))
+        // Skip three bytes of padding, then read the little-endian value.
+        let value = res
+            .data
+            .get(3..7)
+            .and_then(|value| value.try_into().ok())
+            .ok_or(Error::InvalidResponse)?;
+        Ok(u32::from_le_bytes(value))
     }
 
     /// Write a pairing key to the given slot.
@@ -784,13 +777,11 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let data = [slot.as_bytes()];
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::PairingKeyRead as u8, &data[..]);
         let res = self.lt_l3_transfer(cmd_raw)?;
-        // Skip 3 bytes padding, read 32 bytes
-        if res.data.len() < 35 {
-            return Err(Error::InvalidResponse);
-        }
-        Ok(res.data[3..35]
-            .try_into()
-            .expect("pairing key to be 32 bytes"))
+        // Skip three bytes of padding, then read the pairing key.
+        res.data
+            .get(3..35)
+            .and_then(|key| key.try_into().ok())
+            .ok_or(Error::InvalidResponse)
     }
 
     /// Invalidate a pairing key slot.
@@ -820,13 +811,11 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         let data = [slot.as_bytes(), &padding[..], &data_in[..]];
         let cmd_raw = DecryptedL3CommandPacket::new(L3CmdId::MacAndDestroy as u8, &data[..]);
         let res = self.lt_l3_transfer(cmd_raw)?;
-        // Skip 3 bytes padding, read 32 bytes
-        if res.data.len() < 35 {
-            return Err(Error::InvalidResponse);
-        }
-        Ok(res.data[3..35]
-            .try_into()
-            .expect("mac_and_destroy result to be 32 bytes"))
+        // Skip three bytes of padding, then read the MAC.
+        res.data
+            .get(3..35)
+            .and_then(|mac| mac.try_into().ok())
+            .ok_or(Error::InvalidResponse)
     }
 }
 
@@ -966,5 +955,23 @@ mod test {
         assert_eq!(L3ResultStatus::SlotEmpty as u8, 0x15);
         assert_eq!(L3ResultStatus::SlotInvalid as u8, 0x16);
         assert_eq!(L3ResultStatus::HardwareFail as u8, 0x17);
+    }
+
+    #[test]
+    fn l3_result_rejects_zero_length_ciphertext() {
+        let packet = [0; L3_RES_SIZE_SIZE + L3_TAG_SIZE];
+        assert!(matches!(
+            L3ResultPacket::from_bytes(&packet),
+            Err(ParsingError::InvalidData)
+        ));
+    }
+
+    #[test]
+    fn sign_response_rejects_short_signature() {
+        let response = [0; 15 + 63];
+        assert!(matches!(
+            SignResponse::from_bytes(&response),
+            Err(ParsingError::InsufficientData)
+        ));
     }
 }
