@@ -9,7 +9,6 @@ use embedded_hal::spi::ErrorType as SpiErrorType;
 use embedded_hal::spi::SpiDevice;
 use packed_struct::PackingError;
 use packed_struct::derive::PackedStruct;
-use zerocopy::IntoBytes;
 use zeroize::Zeroize;
 
 pub use crate::crypto::CryptoError;
@@ -246,6 +245,8 @@ pub enum Error<ESpi, EGpio> {
     UpdateErr,
     #[display("Monotonic counter invalid")]
     CounterInvalid,
+    #[display("Secure-channel nonce exhausted")]
+    NonceOverflow,
     #[display("L3 slot is empty")]
     SlotEmpty,
     #[display("L3 slot is invalid")]
@@ -296,27 +297,34 @@ impl AsRef<[u8]> for Aes256GcmKey {
     }
 }
 
-/// 96-bit nonce
+/// 32-bit secure-channel nonce.
+///
+/// TROPIC01 places this counter in the least-significant four bytes of the
+/// 12-byte AES-GCM IV. The remaining bytes are always zero.
 #[derive(Default, Zeroize)]
-struct Nonce(u128);
+struct Nonce(u32);
 
 impl Nonce {
-    const MAX_U96: u128 = 2u128.pow(96) - 1;
-
-    /// Increment by 1 with wrapping.
-    const fn wrapping_inc(&mut self) {
-        self.0 += 1;
-        if self.0 > Self::MAX_U96 {
-            self.0 = 1;
+    /// Increment the nonce without ever reusing an IV.
+    const fn increment(&mut self) -> Result<(), NonceOverflow> {
+        match self.0.checked_add(1) {
+            Some(next) => {
+                self.0 = next;
+                Ok(())
+            },
+            None => Err(NonceOverflow),
         }
     }
-}
-impl AsRef<[u8]> for Nonce {
-    fn as_ref(&self) -> &[u8] {
-        let bytes = self.0.as_bytes();
-        &bytes[..12]
+
+    fn to_iv(&self) -> [u8; 12] {
+        let mut iv = [0; 12];
+        iv[..size_of::<u32>()].copy_from_slice(&self.0.to_le_bytes());
+        iv
     }
 }
+
+#[derive(Debug)]
+struct NonceOverflow;
 
 #[derive(Zeroize)]
 struct Session {
@@ -343,14 +351,30 @@ mod test {
 
     #[test]
     fn increment_nonce_works() {
-        let mut expected = 1;
         let mut nonce = Nonce::default();
-        nonce.wrapping_inc();
-        assert_eq!(nonce.0, expected);
+        assert!(nonce.increment().is_ok());
+        assert_eq!(nonce.0, 1);
         for _ in 0..256 {
-            nonce.wrapping_inc();
+            assert!(nonce.increment().is_ok());
         }
-        expected = 257;
-        assert_eq!(nonce.0, expected);
+        assert_eq!(nonce.0, 257);
+    }
+
+    #[test]
+    fn nonce_overflow_is_reported_without_wrapping() {
+        let mut nonce = Nonce(u32::MAX);
+
+        assert!(nonce.increment().is_err());
+        assert_eq!(nonce.0, u32::MAX);
+    }
+
+    #[test]
+    fn nonce_iv_is_little_endian_with_zeroed_high_bytes() {
+        let nonce = Nonce(0x7856_3412);
+
+        assert_eq!(
+            nonce.to_iv(),
+            [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
     }
 }

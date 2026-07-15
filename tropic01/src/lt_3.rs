@@ -311,7 +311,10 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         )
         .map_err(Error::Encryption)?;
 
-        session.encryption_iv.wrapping_inc();
+        session
+            .encryption_iv
+            .increment()
+            .map_err(|_| Error::NonceOverflow)?;
 
         let cmd = EncryptedL3CommandPacket {
             cmd_size: size,
@@ -340,7 +343,10 @@ impl<SPI: SpiDevice, CS: OutputPin> Tropic01<SPI, CS, ActiveSession> {
         aesgcm_decrypt(&session.decrypt, &session.decryption_iv, b"", tag, l3_buf)
             .map_err(Error::Decryption)?;
 
-        session.decryption_iv.wrapping_inc();
+        session
+            .decryption_iv
+            .increment()
+            .map_err(|_| Error::NonceOverflow)?;
 
         let res = L3ResultData::from_bytes(l3_buf)?;
 
